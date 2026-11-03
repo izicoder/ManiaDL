@@ -93,6 +93,11 @@ SORTS = [
 console = Console()
 log_lines: deque = deque(maxlen=10)
 stats = {"ok": 0, "fail": 0, "active": 0, "bytes": 0}
+mstats = {name: {"ok": 0, "streak": 0} for name, _ in MIRRORS}
+
+
+class MirrorMiss(Exception):
+    """Mirror refuses or lacks this set (HTTP 403/404); no point backing off."""
 
 
 def log(msg: str) -> None:
@@ -254,6 +259,8 @@ async def fetch(session, url, part: Path, progress, tid) -> None:
         if r.status == 429:
             await asyncio.sleep(int(r.headers.get("Retry-After", 10)))
             raise aiohttp.ClientError("rate limited")
+        if r.status in (403, 404):
+            raise MirrorMiss(f"HTTP {r.status}")
         if r.status != 200:
             raise aiohttp.ClientError(f"HTTP {r.status}")
         progress.update(tid, total=r.content_length)
@@ -274,7 +281,11 @@ async def download_set(
         stats["active"] += 1
         try:
             for attempt in range(RETRIES):
-                name, tmpl = MIRRORS[attempt % len(MIRRORS)]
+                # best mirror first: fewest consecutive failures, then most successes
+                ranked = sorted(
+                    MIRRORS, key=lambda m: (mstats[m[0]]["streak"], -mstats[m[0]]["ok"])
+                )
+                name, tmpl = ranked[attempt % len(ranked)]
                 try:
                     await asyncio.wait_for(
                         fetch(session, tmpl.format(id=sid), part, progress, tid),
@@ -283,6 +294,8 @@ async def download_set(
                     if not zipfile.is_zipfile(part):
                         raise ValueError("not a valid .osz")
                     os.replace(part, dest)
+                    mstats[name]["ok"] += 1
+                    mstats[name]["streak"] = 0
                     stats["ok"] += 1
                     log(f"[green]+[/] {sid} via {name}")
                     return
@@ -291,14 +304,19 @@ async def download_set(
                     aiohttp.ClientError,
                     ValueError,
                     OSError,
+                    MirrorMiss,
                 ) as e:
                     part.unlink(missing_ok=True)
                     progress.update(tid, completed=0, total=None)
+                    mstats[name]["streak"] += 1
                     log(
                         f"[yellow]![/] {sid} {name}: {type(e).__name__} {e} "
                         f"(try {attempt + 1}/{RETRIES})"
                     )
-                    await asyncio.sleep(min(2**attempt + random.random(), 30))
+                    if not isinstance(
+                        e, MirrorMiss
+                    ):  # only back off on transient errors
+                        await asyncio.sleep(min(2**attempt + random.random(), 30))
             stats["fail"] += 1
             failed.append(sid)
             log(f"[red]x[/] {sid} gave up")
