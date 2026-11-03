@@ -62,12 +62,28 @@ GUIDE = """[bold]How to get your osu! API keys[/]
 # ---- Tunables -------------------------------------------------------------
 API = "https://osu.ppy.sh/api/v2"
 # Mirrors are ranked automatically by recent success. Edit if one dies.
+# nerinyan was dropped: its API answers 404 for every set (and 530 on the root).
 MIRRORS = [
-    ("nerinyan", "https://api.nerinyan.moe/d/{id}?noVideo=true"),
     ("catboy", "https://catboy.best/d/{id}n"),
+    ("beatconnect", "https://beatconnect.io/b/{id}/"),
+    ("catboy-video", "https://catboy.best/d/{id}"),
     ("osu.direct", "https://osu.direct/api/d/{id}"),
 ]
-RETRIES = 4  # attempts per set
+RETRIES = 6  # attempts per set
+# Mirrors sit behind Cloudflare, which 403s anything that smells like a script.
+# A browser-like UA + Referer is the difference between 200 and 403.
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+BROWSER_HEADERS = {
+    "User-Agent": BROWSER_UA,
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+}
+# Don't set Accept-Encoding: aiohttp negotiates gzip/deflate itself, and forcing
+# br would leave every response undecodable.
 FILE_TIMEOUT = 600  # hard cap per file, seconds
 SOCK_READ_TIMEOUT = 30  # no data for this long = stalled
 CONNECT_TIMEOUT = 15
@@ -124,11 +140,50 @@ SETTING_KEYS = [
 console = Console()
 log_lines: deque = deque(maxlen=10)
 stats = {"ok": 0, "fail": 0, "active": 0, "bytes": 0}
-mstats = {name: {"ok": 0, "streak": 0} for name, _ in MIRRORS}
+mstats = {name: {"ok": 0, "streak": 0, "until": 0.0} for name, _ in MIRRORS}
+# Set when every mirror has asked us to back off; the run stops instead of
+# retrying, so a rate limit never turns into a ban.
+mirrors_exhausted = False
 
 
 class MirrorMiss(Exception):
     """Mirror refuses or lacks this set (HTTP 403/404); no point backing off."""
+
+
+class RateLimited(Exception):
+    """HTTP 429: the mirror wants us to come back later."""
+
+    def __init__(self, seconds: int):
+        super().__init__(f"rate limited, retry after {seconds}s")
+        self.seconds = seconds
+
+
+def mirror_headers(url: str) -> dict:
+    """A Referer from the mirror's own site; Cloudflare likes it."""
+    scheme, _, rest = url.partition("://")
+    host = rest.split("/", 1)[0]
+    return {"Referer": f"{scheme}://{host}/"}
+
+
+def mirror_host(template: str) -> str:
+    return template.split("://", 1)[-1].split("/", 1)[0]
+
+
+def choose_mirror(attempt: int):
+    """Pick the healthiest mirror that isn't cooling down after a 429.
+
+    Returns (mirror, wait). A 429 means "come back later", not "fail this set",
+    so the mirror is parked and other mirrors take over; a task never blocks the
+    whole batch on one bad mirror. `wait` is only non-zero when every mirror is
+    parked, in which case the soonest one is returned anyway.
+    """
+    now = time.time()
+    ready = [m for m in MIRRORS if mstats[m[0]]["until"] <= now]
+    if not ready:
+        soonest = min(MIRRORS, key=lambda m: mstats[m[0]]["until"])
+        return soonest, mstats[soonest[0]]["until"] - now
+    ranked = sorted(ready, key=lambda m: (mstats[m[0]]["streak"], -mstats[m[0]]["ok"]))
+    return ranked[attempt % len(ranked)], 0.0
 
 
 def log(msg: str) -> None:
@@ -508,11 +563,16 @@ async def search_sets(session, token, cfg, status, existing) -> list:
 
 # ---- downloading ----------------------------------------------------------
 async def fetch(session, url, part: Path, progress, tid) -> None:
-    async with session.get(url, allow_redirects=True) as r:
+    async with session.get(
+        url, allow_redirects=True, headers=mirror_headers(url)
+    ) as r:
         if r.status == 429:
-            await asyncio.sleep(int(r.headers.get("Retry-After", 10)))
-            raise aiohttp.ClientError("rate limited")
-        if r.status in (403, 404):
+            try:
+                wait = int(r.headers.get("Retry-After", 15))
+            except ValueError:
+                wait = 15
+            raise RateLimited(wait)
+        if r.status in (401, 403, 404, 451):
             raise MirrorMiss(f"HTTP {r.status}")
         if r.status != 200:
             raise aiohttp.ClientError(f"HTTP {r.status}")
@@ -534,11 +594,14 @@ async def download_set(
         stats["active"] += 1
         try:
             for attempt in range(RETRIES):
-                # best mirror first: fewest consecutive failures, then most successes
-                ranked = sorted(
-                    MIRRORS, key=lambda m: (mstats[m[0]]["streak"], -mstats[m[0]]["ok"])
-                )
-                name, tmpl = ranked[attempt % len(ranked)]
+                (name, tmpl), wait = choose_mirror(attempt)
+                if wait > 0:
+                    # Every mirror is cooling down. Touching them again is how
+                    # an IP gets banned, so give up on this set for now; the
+                    # batch loop stops the run once it sees the flag.
+                    globals()["mirrors_exhausted"] = True
+                    log("[yellow]…[/] all mirrors rate-limiting; stopping this set")
+                    break
                 try:
                     await asyncio.wait_for(
                         fetch(session, tmpl.format(id=sid), part, progress, tid),
@@ -550,6 +613,7 @@ async def download_set(
                     status.mark_done(sid)
                     mstats[name]["ok"] += 1
                     mstats[name]["streak"] = 0
+                    mstats[name]["until"] = 0.0
                     stats["ok"] += 1
                     log(f"[green]+[/] {sid} via {name}")
                     return
@@ -559,17 +623,32 @@ async def download_set(
                     ValueError,
                     OSError,
                     MirrorMiss,
+                    RateLimited,
                 ) as e:
                     part.unlink(missing_ok=True)
                     progress.update(tid, completed=0, total=None)
-                    mstats[name]["streak"] += 1
                     log(
                         f"[yellow]![/] {sid} {name}: {type(e).__name__} {e} "
                         f"(try {attempt + 1}/{RETRIES})"
                     )
-                    if not isinstance(
-                        e, MirrorMiss
-                    ):  # back off only on transient errors
+                    if isinstance(e, MirrorMiss):
+                        # This mirror just lacks the set; don't hold it against
+                        # it, and jump straight to the next one.
+                        pass
+                    elif isinstance(e, RateLimited):
+                        # Park the whole host, not just this mirror entry, and
+                        # move on. Sleeping here would stall every set in the
+                        # batch for as long as the mirror asks.
+                        until = time.time() + e.seconds
+                        for other_name, other_tmpl in MIRRORS:
+                            if mirror_host(other_tmpl) == mirror_host(tmpl):
+                                mstats[other_name]["until"] = until
+                        log(
+                            f"[yellow]…[/] {mirror_host(tmpl)} cooling down "
+                            f"for {e.seconds}s"
+                        )
+                    else:
+                        mstats[name]["streak"] += 1
                         await asyncio.sleep(min(2**attempt + random.random(), 30))
             stats["fail"] += 1
             failed.append(sid)
@@ -620,6 +699,8 @@ async def main() -> None:
     cfg["out"].mkdir(parents=True, exist_ok=True)
     for leftover in cfg["out"].glob("*.part"):  # clean interrupted downloads
         leftover.unlink(missing_ok=True)
+    global mirrors_exhausted
+    mirrors_exhausted = False
     status = Status(cfg["out"]).load()
     if status.failed:
         console.print(
@@ -632,7 +713,7 @@ async def main() -> None:
         sock_connect=CONNECT_TIMEOUT,
         sock_read=SOCK_READ_TIMEOUT,
     )
-    headers = {"User-Agent": "osu-mania-downloader/1.0"}
+    headers = dict(BROWSER_HEADERS)
     conn = aiohttp.TCPConnector(limit=cfg["workers"] * 2)
     async with aiohttp.ClientSession(
         timeout=timeout, headers=headers, connector=conn
@@ -712,12 +793,23 @@ async def main() -> None:
                         )
                     )
                     await asyncio.sleep(BATCH_PAUSE)
+                    if mirrors_exhausted:
+                        log(
+                            "[red]Every mirror is rate-limiting us; stopping "
+                            "instead of hammering them. Re-run later.[/]"
+                        )
+                        break
         finally:
             for leftover in cfg["out"].glob("*.part"):
                 leftover.unlink(missing_ok=True)
             if failed:
                 status.mark_failed(failed)
 
+    if mirrors_exhausted:
+        console.print(
+            "[yellow]Stopped early: the mirrors rate-limited this IP. Nothing was "
+            "hammered. Re-run later; finished sets are already recorded.[/]"
+        )
     console.print(
         f"\n[bold]Done.[/] {stats['ok']} downloaded, {stats['fail']} failed. "
         f"Files in {cfg['out']}"
