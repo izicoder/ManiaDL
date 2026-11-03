@@ -5,7 +5,7 @@ Filter by key count(s), status(es), star rating, favourites.
 
 Setup:
     pip install aiohttp rich
-    python osu_mania_downloader.py
+    python maniadl.py
 
 Everything you enter (API keys, folder, filters) is saved to
 mania_dl_config.json next to this script and offered again next run:
@@ -69,7 +69,7 @@ MIRRORS = [
     ("catboy-video", "https://catboy.best/d/{id}"),
     ("osu.direct", "https://osu.direct/api/d/{id}"),
 ]
-RETRIES = 6  # attempts per set
+RETRIES = 8  # attempts per set (raised from 6 for flaky large files)
 # Mirrors sit behind Cloudflare, which 403s anything that smells like a script.
 # A browser-like UA + Referer is the difference between 200 and 403.
 # These are sent ONLY to mirrors: osu!'s own API 403s a browser UA that has no
@@ -87,8 +87,8 @@ BROWSER_HEADERS = {
 API_UA = "osu-mania-downloader/1.0"
 # Don't set Accept-Encoding: aiohttp negotiates gzip/deflate itself, and forcing
 # br would leave every response undecodable.
-FILE_TIMEOUT = 600  # hard cap per file, seconds
-SOCK_READ_TIMEOUT = 30  # no data for this long = stalled
+FILE_TIMEOUT = 900  # hard cap per file, seconds (raised for large mapsets)
+SOCK_READ_TIMEOUT = 120  # no data for this long = stalled (was 30)
 CONNECT_TIMEOUT = 15
 BATCH_PAUSE = 2.0  # seconds between batches
 SEARCH_DELAY = 1.0  # seconds between API search pages
@@ -594,12 +594,23 @@ async def fetch(session, url, part: Path, progress, tid) -> None:
             raise MirrorMiss(f"HTTP {r.status}")
         if r.status != 200:
             raise aiohttp.ClientError(f"HTTP {r.status}")
-        progress.update(tid, total=r.content_length)
-        with open(part, "wb") as f:
-            async for chunk in r.content.iter_chunked(65536):
-                f.write(chunk)
-                stats["bytes"] += len(chunk)
-                progress.update(tid, advance=len(chunk))
+
+        expected = r.content_length
+        progress.update(tid, total=expected)
+
+        received = 0
+        try:
+            with open(part, "wb") as f:
+                async for chunk in r.content.iter_chunked(65536):
+                    f.write(chunk)
+                    received += len(chunk)
+                    stats["bytes"] += len(chunk)
+                    progress.update(tid, advance=len(chunk))
+        except aiohttp.ClientPayloadError as e:
+            # Re-raise with concrete byte counts so the log is useful
+            raise aiohttp.ClientPayloadError(
+                f"incomplete payload (got {received} of {expected or '?'} bytes): {e}"
+            ) from e
 
 
 async def download_set(
@@ -645,10 +656,13 @@ async def download_set(
                 ) as e:
                     part.unlink(missing_ok=True)
                     progress.update(tid, completed=0, total=None)
+
+                    is_payload = isinstance(e, aiohttp.ClientPayloadError)
                     log(
                         f"[yellow]![/] {sid} {name}: {type(e).__name__} {e} "
                         f"(try {attempt + 1}/{RETRIES})"
                     )
+
                     if isinstance(e, MirrorMiss):
                         # This mirror just lacks the set; don't hold it against
                         # it, and jump straight to the next one.
@@ -667,7 +681,11 @@ async def download_set(
                         )
                     else:
                         mstats[name]["streak"] += 1
-                        await asyncio.sleep(min(2**attempt + random.random(), 30))
+                        # Extra patience for incomplete / truncated downloads
+                        delay = min(2 ** attempt + random.random(), 45)
+                        if is_payload:
+                            delay = max(delay, 8)  # at least a few seconds
+                        await asyncio.sleep(delay)
             stats["fail"] += 1
             failed.append(sid)
             log(f"[red]x[/] {sid} gave up")
