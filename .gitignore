@@ -233,3 +233,14 @@ __marimo__/
 
 # Built Visual Studio Code Extensions
 *.vsix
+
+# This tool's local state: contains the osu! OAuth secret in plain text
+mania_dl_config.json
+key.txt
+shit.txt
+
+# Downloader output state
+downloaded_ids.txt
+failed.txt
+*.part
+*.osz
