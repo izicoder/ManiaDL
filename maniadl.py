@@ -105,6 +105,7 @@ SETTING_KEYS = [
     "min_favs",
     "sort",
     "limit",
+    "slide_window",
     "workers",
     "batch",
 ]
@@ -148,6 +149,13 @@ def as_text(v) -> str:
     if isinstance(v, list):
         return ",".join(str(x) for x in v)
     return str(v)
+
+
+def as_bool(v) -> bool:
+    """Saved toggles may be a real bool, or a string like "yes"/"false"."""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 # ---- helpers --------------------------------------------------------------
@@ -218,6 +226,7 @@ def cfg_from_raw(raw: dict) -> dict:
         "min_favs": int(raw["min_favs"]),
         "sort": sort,
         "limit": int(raw["limit"]),
+        "slide_window": as_bool(raw.get("slide_window", False)),
         "workers": max(1, int(raw["workers"])),
         "batch": max(1, int(raw["batch"])),
     }
@@ -235,6 +244,7 @@ def show_summary(cfg: dict) -> None:
     t.add_row("Min favourites", str(cfg["min_favs"]))
     t.add_row("Sort", cfg["sort"])
     t.add_row("Max sets", str(cfg["limit"]))
+    t.add_row("Sliding window", "yes" if cfg["slide_window"] else "no")
     t.add_row("Parallel / batch", f"{cfg['workers']} / {cfg['batch']}")
     console.print(t)
 
@@ -286,6 +296,11 @@ def ask_config(saved: dict):
         default=sort_default if sort_default in SORTS else SORTS[0],
     )
     raw["limit"] = IntPrompt.ask("Max sets to fetch", default=int(d("limit", "500")))
+    raw["slide_window"] = Confirm.ask(
+        "Slide past already-downloaded sets? "
+        "(keep paging until it finds that many new ones; no = stop at the first N matches)",
+        default=as_bool(saved.get("slide_window", False)),
+    )
     raw["workers"] = IntPrompt.ask("Parallel downloads", default=int(d("workers", "4")))
     raw["batch"] = IntPrompt.ask("Batch size", default=int(d("batch", "20")))
     return cfg_from_raw(raw), raw
@@ -329,9 +344,21 @@ def qualifies(s: dict, cfg: dict) -> bool:
     return False
 
 
-async def search_one(session, headers, params, cfg, found, status) -> None:
+def new_matches(found: dict, existing: set, slide: bool) -> int:
+    """How many of `found` are sets we don't have yet.
+
+    With the sliding window off, the limit counts every match (like before).
+    With it on, already-downloaded sets don't count, so paging continues until
+    `limit` genuinely new sets are collected (or osu! runs out of results).
+    """
+    if not slide:
+        return len(found)
+    return sum(1 for sid in found if sid not in existing)
+
+
+async def search_one(session, headers, params, cfg, found, status, existing) -> None:
     cursor = None
-    while len(found) < cfg["limit"]:
+    while new_matches(found, existing, cfg["slide_window"]) < cfg["limit"]:
         p = dict(params)
         if cursor:
             p["cursor_string"] = cursor
@@ -347,28 +374,34 @@ async def search_one(session, headers, params, cfg, found, status) -> None:
         for s in data.get("beatmapsets", []):
             if qualifies(s, cfg):
                 found[s["id"]] = s
-        status.update(f"Searching... {len(found)} matching sets")
+        status.update(
+            f"Searching... {new_matches(found, existing, cfg['slide_window'])} "
+            "matching sets"
+        )
         cursor = data.get("cursor_string")
         if not cursor or not data.get("beatmapsets"):
             break
         await asyncio.sleep(SEARCH_DELAY)
 
 
-async def search_sets(session, token, cfg, status) -> list:
+async def search_sets(session, token, cfg, status, existing) -> list:
     headers = {"Authorization": f"Bearer {token}"}
     found: dict = {}
     key_list = cfg["keys"] if cfg["keys"] is not None else [None]
     for st in cfg["statuses"]:
         for k in key_list:
-            if len(found) >= cfg["limit"]:
+            if new_matches(found, existing, cfg["slide_window"]) >= cfg["limit"]:
                 break
             params = {"m": "3", "sort": cfg["sort"]}
             if st != "any":
                 params["s"] = st
             if k is not None:
                 params["q"] = f"keys={k}"
-            await search_one(session, headers, params, cfg, found, status)
-    return list(found.values())[: cfg["limit"]]
+            await search_one(session, headers, params, cfg, found, status, existing)
+    sets = list(found.values())
+    if not cfg["slide_window"]:
+        sets = sets[: cfg["limit"]]
+    return sets
 
 
 # ---- downloading ----------------------------------------------------------
@@ -449,6 +482,9 @@ async def download_set(
 async def main() -> None:
     console.print(Panel("osu!mania bulk downloader (lazer)", style="cyan"))
     saved = load_saved()
+    # Configs written before this option existed default to off, so an existing
+    # saved setup keeps loading without a full re-prompt.
+    saved.setdefault("slide_window", False)
 
     cid = os.environ.get("OSU_CLIENT_ID") or saved.get("client_id")
     secret = os.environ.get("OSU_CLIENT_SECRET") or saved.get("client_secret")
@@ -495,10 +531,10 @@ async def main() -> None:
         timeout=timeout, headers=headers, connector=conn
     ) as session:
         token = await get_token(session, cid, secret)
-        with console.status("Searching...") as st:
-            sets = await search_sets(session, token, cfg, st)
-
         existing = scan_existing(cfg["out"])
+        with console.status("Searching...") as st:
+            sets = await search_sets(session, token, cfg, st, existing)
+
         todo = [s for s in sets if s["id"] not in existing]
         console.print(
             f"Found [bold]{len(sets)}[/] matching sets, "
