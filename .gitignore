@@ -240,6 +240,7 @@ key.txt
 shit.txt
 
 # Downloader output state
+status.json
 downloaded_ids.txt
 failed.txt
 *.part

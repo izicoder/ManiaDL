@@ -11,6 +11,11 @@ Everything you enter (API keys, folder, filters) is saved to
 mania_dl_config.json next to this script and offered again next run:
 just press Enter at "Use these settings?" to go straight to searching.
 That file contains your API secret in plain text: keep it out of git.
+
+Each download folder gets one status.json holding everything this tool
+remembers about it: the sets already fetched and the ones that failed last
+run. Keep it if you want sets to stay skipped after you import them into
+lazer and delete their .osz.
 """
 
 import asyncio
@@ -78,9 +83,14 @@ else:
     HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "mania_dl_config.json"
 DEFAULT_OUT = HERE / "downloads"
-# IDs of everything this tool downloaded, kept in the download folder so a set is
-# still skipped after you delete its .osz (osu!lazer keeps maps in its own database).
-HISTORY_NAME = "downloaded_ids.txt"
+# Everything this tool remembers about a download folder lives in this one file,
+# so a set is still skipped after you import it into lazer and delete its .osz
+# (osu!lazer keeps maps in its own database, which the tool can't read).
+STATUS_NAME = "status.json"
+STATUS_VERSION = 1
+# Old per-run text files; read once to seed status.json, never written again.
+LEGACY_IDS_NAME = "downloaded_ids.txt"
+LEGACY_FAILED_NAME = "failed.txt"
 
 STATUS_SETS = {
     "graveyard": {"graveyard"},
@@ -167,7 +177,7 @@ def free_gb(path: Path) -> float:
 
 
 def scan_existing(folder: Path) -> set:
-    """IDs already downloaded: '123.osz' / '123 Artist - Title.osz' files + history file."""
+    """IDs already on disk: '123.osz' / '123 Artist - Title.osz' files."""
     ids = set()
     if not folder.exists():
         return ids
@@ -175,21 +185,113 @@ def scan_existing(folder: Path) -> set:
         m = re.match(r"(\d+)(?:[ .]|$)", p.name)
         if m and p.suffix.lower() == ".osz":
             ids.add(int(m.group(1)))
-    try:
-        for tok in (folder / HISTORY_NAME).read_text(encoding="utf-8").split():
-            if tok.isdigit():
-                ids.add(int(tok))
-    except OSError:
-        pass
     return ids
 
 
-def record_downloaded(folder: Path, sid: int) -> None:
-    try:
-        with open(folder / HISTORY_NAME, "a", encoding="utf-8") as f:
-            f.write(f"{sid}\n")
-    except OSError:
-        pass
+def _stamp(ts: float = None) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts or time.time()))
+
+
+class Status:
+    """A download folder's memory, kept in a single status.json.
+
+    Holds the set IDs already fetched (with timestamps) and the IDs that failed
+    last run. Writes are atomic (temp file + os.replace), so killing the process
+    mid-save can never leave a truncated status.json behind.
+    """
+
+    def __init__(self, folder: Path):
+        self.folder = folder
+        self.path = folder / STATUS_NAME
+        self.downloaded: dict = {}  # {"set id": timestamp}
+        self.failed: list = []
+        self.updated = ""
+
+    def load(self) -> "Status":
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except OSError:
+            data = None
+        except ValueError:
+            console.print(f"[yellow]![/] {STATUS_NAME} isn't valid JSON; rebuilding it.")
+            data = None
+        if isinstance(data, dict):
+            raw = data.get("downloaded") or {}
+            if isinstance(raw, dict):
+                self.downloaded = {str(k): str(v) for k, v in raw.items()}
+            elif isinstance(raw, list):  # tolerate a bare list of IDs
+                self.downloaded = {str(k): "" for k in raw}
+            kept = []
+            for x in data.get("failed") or []:
+                try:
+                    kept.append(int(x))
+                except (TypeError, ValueError):
+                    pass
+            self.failed = kept
+            self.updated = str(data.get("updated") or "")
+        self._migrate_legacy()
+        return self
+
+    def _migrate_legacy(self) -> None:
+        """Fold the old downloaded_ids.txt / failed.txt in once, if they exist."""
+        if self.path.exists():
+            return
+        moved = []
+        old_ids = self.folder / LEGACY_IDS_NAME
+        try:
+            stamp = _stamp(old_ids.stat().st_mtime)
+        except OSError:
+            stamp = ""
+        try:
+            for tok in old_ids.read_text(encoding="utf-8").split():
+                if tok.isdigit() and tok not in self.downloaded:
+                    self.downloaded[tok] = stamp
+            moved.append(LEGACY_IDS_NAME)
+        except OSError:
+            pass
+        old_failed = self.folder / LEGACY_FAILED_NAME
+        try:
+            for tok in old_failed.read_text(encoding="utf-8").split():
+                if tok.isdigit() and int(tok) not in self.failed:
+                    self.failed.append(int(tok))
+            moved.append(LEGACY_FAILED_NAME)
+        except OSError:
+            pass
+        if moved:
+            self.save()
+            console.print(
+                f"[dim]Imported {' and '.join(moved)} into {STATUS_NAME}; "
+                "you can delete the old text files.[/]"
+            )
+
+    @property
+    def ids(self) -> set:
+        return {int(k) for k in self.downloaded if str(k).isdigit()}
+
+    def mark_done(self, sid: int) -> None:
+        self.downloaded[str(sid)] = _stamp()
+        self.save()
+
+    def mark_failed(self, ids) -> None:
+        self.failed = sorted({int(i) for i in ids})
+        self.save()
+
+    def save(self) -> None:
+        self.updated = _stamp()
+        ordered = sorted((k for k in self.downloaded if str(k).isdigit()), key=int)
+        payload = {
+            "version": STATUS_VERSION,
+            "updated": self.updated,
+            "downloaded": {k: self.downloaded[k] for k in ordered},
+            "failed": self.failed,
+        }
+        tmp = self.folder / (STATUS_NAME + ".tmp")
+        try:
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError as e:
+            tmp.unlink(missing_ok=True)
+            log(f"[yellow]![/] couldn't write {STATUS_NAME}: {e}")
 
 
 def parse_statuses(text: str):
@@ -423,7 +525,7 @@ async def fetch(session, url, part: Path, progress, tid) -> None:
 
 
 async def download_set(
-    session, sid, title, cfg, progress, overall, otid, sem, failed
+    session, sid, title, cfg, progress, overall, otid, sem, failed, status
 ) -> None:
     dest = cfg["out"] / f"{sid}.osz"
     part = dest.with_suffix(".part")
@@ -445,7 +547,7 @@ async def download_set(
                     if not zipfile.is_zipfile(part):
                         raise ValueError("not a valid .osz")
                     os.replace(part, dest)
-                    record_downloaded(cfg["out"], sid)
+                    status.mark_done(sid)
                     mstats[name]["ok"] += 1
                     mstats[name]["streak"] = 0
                     stats["ok"] += 1
@@ -518,6 +620,11 @@ async def main() -> None:
     cfg["out"].mkdir(parents=True, exist_ok=True)
     for leftover in cfg["out"].glob("*.part"):  # clean interrupted downloads
         leftover.unlink(missing_ok=True)
+    status = Status(cfg["out"]).load()
+    if status.failed:
+        console.print(
+            f"[dim]{len(status.failed)} set(s) failed last run; they'll be retried.[/]"
+        )
 
     timeout = aiohttp.ClientTimeout(
         total=None,
@@ -531,7 +638,7 @@ async def main() -> None:
         timeout=timeout, headers=headers, connector=conn
     ) as session:
         token = await get_token(session, cid, secret)
-        existing = scan_existing(cfg["out"])
+        existing = scan_existing(cfg["out"]) | status.ids
         with console.status("Searching...") as st:
             sets = await search_sets(session, token, cfg, st, existing)
 
@@ -599,6 +706,7 @@ async def main() -> None:
                                 otid,
                                 sem,
                                 failed,
+                                status,
                             )
                             for s in batch
                         )
@@ -608,14 +716,16 @@ async def main() -> None:
             for leftover in cfg["out"].glob("*.part"):
                 leftover.unlink(missing_ok=True)
             if failed:
-                (cfg["out"] / "failed.txt").write_text("\n".join(map(str, failed)))
+                status.mark_failed(failed)
 
     console.print(
         f"\n[bold]Done.[/] {stats['ok']} downloaded, {stats['fail']} failed. "
         f"Files in {cfg['out']}"
     )
     if stats["fail"]:
-        console.print(f"Failed IDs saved to {cfg['out'] / 'failed.txt'}")
+        console.print(
+            f"Failed IDs recorded in {status.path} (they'll be retried next run)"
+        )
 
 
 if __name__ == "__main__":
