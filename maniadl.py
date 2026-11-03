@@ -61,19 +61,17 @@ GUIDE = """[bold]How to get your osu! API keys[/]
 
 # ---- Tunables -------------------------------------------------------------
 API = "https://osu.ppy.sh/api/v2"
-# Mirrors are ranked automatically by recent success. Edit if one dies.
-# nerinyan was dropped: its API answers 404 for every set (and 530 on the root).
+# More mirrors, especially ones that are stronger on graveyard sets.
 MIRRORS = [
+    ("nerinyan", "https://api.nerinyan.moe/d/{id}"),
+    ("nekoha", "https://mirror.nekoha.moe/api/download/{id}"),
     ("catboy", "https://catboy.best/d/{id}n"),
     ("beatconnect", "https://beatconnect.io/b/{id}/"),
-    ("catboy-video", "https://catboy.best/d/{id}"),
     ("osu.direct", "https://osu.direct/api/d/{id}"),
+    ("sayobot", "https://dl.sayobot.cn/beatmaps/download/full/{id}"),
+    ("catboy-video", "https://catboy.best/d/{id}"),
 ]
-RETRIES = 8  # attempts per set (raised from 6 for flaky large files)
-# Mirrors sit behind Cloudflare, which 403s anything that smells like a script.
-# A browser-like UA + Referer is the difference between 200 and 403.
-# These are sent ONLY to mirrors: osu!'s own API 403s a browser UA that has no
-# Origin/Referer (it looks like a fake browser), but accepts a plain one.
+RETRIES = 6
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -84,30 +82,22 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Cache-Control": "no-cache",
 }
-API_UA = "osu-mania-downloader/1.0"
-# Don't set Accept-Encoding: aiohttp negotiates gzip/deflate itself, and forcing
-# br would leave every response undecodable.
-FILE_TIMEOUT = 900  # hard cap per file, seconds (raised for large mapsets)
-SOCK_READ_TIMEOUT = 120  # no data for this long = stalled (was 30)
+API_UA = "osu-mania-downloader/1.1"
+FILE_TIMEOUT = 900
+SOCK_READ_TIMEOUT = 120
 CONNECT_TIMEOUT = 15
-BATCH_PAUSE = 2.0  # seconds between batches
-SEARCH_DELAY = 1.0  # seconds between API search pages
-MIN_FREE_GB = 5.0  # stop if disk space drops below this
+BATCH_PAUSE = 2.0
+SEARCH_DELAY = 1.0
+MIN_FREE_GB = 5.0
 
-# When packed into an exe, __file__ points at a temp dir that is wiped on exit,
-# so keep config + downloads next to the exe instead.
 if getattr(sys, "frozen", False):
     HERE = Path(sys.executable).resolve().parent
 else:
     HERE = Path(__file__).resolve().parent
 CONFIG_PATH = HERE / "mania_dl_config.json"
 DEFAULT_OUT = HERE / "downloads"
-# Everything this tool remembers about a download folder lives in this one file,
-# so a set is still skipped after you import it into lazer and delete its .osz
-# (osu!lazer keeps maps in its own database, which the tool can't read).
 STATUS_NAME = "status.json"
 STATUS_VERSION = 1
-# Old per-run text files; read once to seed status.json, never written again.
 LEGACY_IDS_NAME = "downloaded_ids.txt"
 LEGACY_FAILED_NAME = "failed.txt"
 
@@ -141,11 +131,9 @@ SETTING_KEYS = [
 # ---------------------------------------------------------------------------
 
 console = Console()
-log_lines: deque = deque(maxlen=10)
+log_lines: deque = deque(maxlen=12)
 stats = {"ok": 0, "fail": 0, "active": 0, "bytes": 0}
 mstats = {name: {"ok": 0, "streak": 0, "until": 0.0} for name, _ in MIRRORS}
-# Set when every mirror has asked us to back off; the run stops instead of
-# retrying, so a rate limit never turns into a ban.
 mirrors_exhausted = False
 
 
@@ -162,7 +150,6 @@ class RateLimited(Exception):
 
 
 def mirror_headers(url: str) -> dict:
-    """A Referer from the mirror's own site; Cloudflare likes it."""
     scheme, _, rest = url.partition("://")
     host = rest.split("/", 1)[0]
     return {"Referer": f"{scheme}://{host}/"}
@@ -173,13 +160,6 @@ def mirror_host(template: str) -> str:
 
 
 def choose_mirror(attempt: int):
-    """Pick the healthiest mirror that isn't cooling down after a 429.
-
-    Returns (mirror, wait). A 429 means "come back later", not "fail this set",
-    so the mirror is parked and other mirrors take over; a task never blocks the
-    whole batch on one bad mirror. `wait` is only non-zero when every mirror is
-    parked, in which case the soonest one is returned anyway.
-    """
     now = time.time()
     ready = [m for m in MIRRORS if mstats[m[0]]["until"] <= now]
     if not ready:
@@ -193,7 +173,6 @@ def log(msg: str) -> None:
     log_lines.append(f"[dim]{time.strftime('%H:%M:%S')}[/] {msg}")
 
 
-# ---- saved settings -------------------------------------------------------
 def load_saved() -> dict:
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -205,7 +184,7 @@ def save_saved(data: dict) -> None:
     try:
         CONFIG_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
         try:
-            os.chmod(CONFIG_PATH, 0o600)  # limited effect on Windows
+            os.chmod(CONFIG_PATH, 0o600)
         except OSError:
             pass
     except OSError as e:
@@ -213,20 +192,17 @@ def save_saved(data: dict) -> None:
 
 
 def as_text(v) -> str:
-    """Saved statuses/keys may be a list (older config) or a string."""
     if isinstance(v, list):
         return ",".join(str(x) for x in v)
     return str(v)
 
 
 def as_bool(v) -> bool:
-    """Saved toggles may be a real bool, or a string like "yes"/"false"."""
     if isinstance(v, bool):
         return v
     return str(v).strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-# ---- helpers --------------------------------------------------------------
 def free_gb(path: Path) -> float:
     p = path
     while not p.exists() and p != p.parent:
@@ -235,7 +211,6 @@ def free_gb(path: Path) -> float:
 
 
 def scan_existing(folder: Path) -> set:
-    """IDs already on disk: '123.osz' / '123 Artist - Title.osz' files."""
     ids = set()
     if not folder.exists():
         return ids
@@ -251,17 +226,10 @@ def _stamp(ts: float = None) -> str:
 
 
 class Status:
-    """A download folder's memory, kept in a single status.json.
-
-    Holds the set IDs already fetched (with timestamps) and the IDs that failed
-    last run. Writes are atomic (temp file + os.replace), so killing the process
-    mid-save can never leave a truncated status.json behind.
-    """
-
     def __init__(self, folder: Path):
         self.folder = folder
         self.path = folder / STATUS_NAME
-        self.downloaded: dict = {}  # {"set id": timestamp}
+        self.downloaded: dict = {}
         self.failed: list = []
         self.updated = ""
 
@@ -277,7 +245,7 @@ class Status:
             raw = data.get("downloaded") or {}
             if isinstance(raw, dict):
                 self.downloaded = {str(k): str(v) for k, v in raw.items()}
-            elif isinstance(raw, list):  # tolerate a bare list of IDs
+            elif isinstance(raw, list):
                 self.downloaded = {str(k): "" for k in raw}
             kept = []
             for x in data.get("failed") or []:
@@ -291,7 +259,6 @@ class Status:
         return self
 
     def _migrate_legacy(self) -> None:
-        """Fold the old downloaded_ids.txt / failed.txt in once, if they exist."""
         if self.path.exists():
             return
         moved = []
@@ -353,7 +320,6 @@ class Status:
 
 
 def parse_statuses(text: str):
-    """Return list of statuses to search; ['any'] means no status filter."""
     parts = [p.strip().lower() for p in text.split(",") if p.strip()]
     if not parts or "any" in parts:
         return ["any"]
@@ -364,7 +330,6 @@ def parse_statuses(text: str):
 
 
 def parse_keys(text: str):
-    """Return sorted list of key counts, or None for all."""
     t = text.strip().lower()
     if t in ("", "all", "any"):
         return None
@@ -375,7 +340,6 @@ def parse_keys(text: str):
 
 
 def cfg_from_raw(raw: dict) -> dict:
-    """Build a run config from saved raw settings (raises on missing/bad values)."""
     sort = raw["sort"] if raw["sort"] in SORTS else SORTS[0]
     return {
         "out": Path(str(raw["out"])),
@@ -410,7 +374,6 @@ def show_summary(cfg: dict) -> None:
 
 
 def ask_config(saved: dict):
-    """Prompt for settings (saved values are the defaults). Returns (cfg, raw)."""
     raw: dict = {}
 
     def d(key, fallback):
@@ -466,7 +429,6 @@ def ask_config(saved: dict):
     return cfg_from_raw(raw), raw
 
 
-# ---- osu! API -------------------------------------------------------------
 async def get_token(session: aiohttp.ClientSession, cid: str, secret: str) -> str:
     payload = {
         "client_id": int(cid),
@@ -478,7 +440,6 @@ async def get_token(session: aiohttp.ClientSession, cid: str, secret: str) -> st
         if r.status != 200:
             detail = (await r.text())[:200].strip()
             if r.status in (400, 401):
-                # osu! says the credentials themselves are wrong: forget them.
                 bad = load_saved()
                 if "client_id" in bad or "client_secret" in bad:
                     bad.pop("client_id", None)
@@ -490,7 +451,6 @@ async def get_token(session: aiohttp.ClientSession, cid: str, secret: str) -> st
                     )
                 console.print(Panel(GUIDE, title="Auth failed - check your keys"))
             else:
-                # 403/429/5xx are osu!'s edge, not your keys: keep them saved.
                 console.print(
                     f"[yellow]osu! refused the token request (HTTP {r.status}). "
                     "That's their server, not your keys; saved credentials were "
@@ -518,12 +478,6 @@ def qualifies(s: dict, cfg: dict) -> bool:
 
 
 def new_matches(found: dict, existing: set, slide: bool) -> int:
-    """How many of `found` are sets we don't have yet.
-
-    With the sliding window off, the limit counts every match (like before).
-    With it on, already-downloaded sets don't count, so paging continues until
-    `limit` genuinely new sets are collected (or osu! runs out of results).
-    """
     if not slide:
         return len(found)
     return sum(1 for sid in found if sid not in existing)
@@ -577,7 +531,6 @@ async def search_sets(session, token, cfg, status, existing) -> list:
     return sets
 
 
-# ---- downloading ----------------------------------------------------------
 async def fetch(session, url, part: Path, progress, tid) -> None:
     async with session.get(
         url,
@@ -607,7 +560,6 @@ async def fetch(session, url, part: Path, progress, tid) -> None:
                     stats["bytes"] += len(chunk)
                     progress.update(tid, advance=len(chunk))
         except aiohttp.ClientPayloadError as e:
-            # Re-raise with concrete byte counts so the log is useful
             raise aiohttp.ClientPayloadError(
                 f"incomplete payload (got {received} of {expected or '?'} bytes): {e}"
             ) from e
@@ -625,9 +577,6 @@ async def download_set(
             for attempt in range(RETRIES):
                 (name, tmpl), wait = choose_mirror(attempt)
                 if wait > 0:
-                    # Every mirror is cooling down. Touching them again is how
-                    # an IP gets banned, so give up on this set for now; the
-                    # batch loop stops the run once it sees the flag.
                     globals()["mirrors_exhausted"] = True
                     log("[yellow]…[/] all mirrors rate-limiting; stopping this set")
                     break
@@ -664,13 +613,8 @@ async def download_set(
                     )
 
                     if isinstance(e, MirrorMiss):
-                        # This mirror just lacks the set; don't hold it against
-                        # it, and jump straight to the next one.
                         pass
                     elif isinstance(e, RateLimited):
-                        # Park the whole host, not just this mirror entry, and
-                        # move on. Sleeping here would stall every set in the
-                        # batch for as long as the mirror asks.
                         until = time.time() + e.seconds
                         for other_name, other_tmpl in MIRRORS:
                             if mirror_host(other_tmpl) == mirror_host(tmpl):
@@ -681,26 +625,26 @@ async def download_set(
                         )
                     else:
                         mstats[name]["streak"] += 1
-                        # Extra patience for incomplete / truncated downloads
                         delay = min(2 ** attempt + random.random(), 45)
                         if is_payload:
-                            delay = max(delay, 8)  # at least a few seconds
+                            delay = max(delay, 10)
                         await asyncio.sleep(delay)
             stats["fail"] += 1
             failed.append(sid)
-            log(f"[red]x[/] {sid} gave up")
+            log(f"[red]x[/] {sid} gave up after {RETRIES} tries")
+            log(
+                f"[cyan]→[/] download manually: "
+                f"https://osu.ppy.sh/beatmapsets/{sid}"
+            )
         finally:
             stats["active"] -= 1
             progress.remove_task(tid)
             overall.update(otid, advance=1)
 
 
-# ---- main -----------------------------------------------------------------
 async def main() -> None:
     console.print(Panel("osu!mania bulk downloader (lazer)", style="cyan"))
     saved = load_saved()
-    # Configs written before this option existed default to off, so an existing
-    # saved setup keeps loading without a full re-prompt.
     saved.setdefault("slide_window", False)
 
     cid = os.environ.get("OSU_CLIENT_ID") or saved.get("client_id")
@@ -733,7 +677,7 @@ async def main() -> None:
         save_saved(saved)
 
     cfg["out"].mkdir(parents=True, exist_ok=True)
-    for leftover in cfg["out"].glob("*.part"):  # clean interrupted downloads
+    for leftover in cfg["out"].glob("*.part"):
         leftover.unlink(missing_ok=True)
     global mirrors_exhausted
     mirrors_exhausted = False
@@ -853,6 +797,11 @@ async def main() -> None:
     if stats["fail"]:
         console.print(
             f"Failed IDs recorded in {status.path} (they'll be retried next run)"
+        )
+        console.print(
+            "\n[dim]Stubborn sets (especially large graveyard ones) are often "
+            "truncated on the mirrors. Just open the link shown in the log and "
+            "download from the official site.[/]"
         )
 
 
