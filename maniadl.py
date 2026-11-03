@@ -72,6 +72,8 @@ MIRRORS = [
 RETRIES = 6  # attempts per set
 # Mirrors sit behind Cloudflare, which 403s anything that smells like a script.
 # A browser-like UA + Referer is the difference between 200 and 403.
+# These are sent ONLY to mirrors: osu!'s own API 403s a browser UA that has no
+# Origin/Referer (it looks like a fake browser), but accepts a plain one.
 BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -82,6 +84,7 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Cache-Control": "no-cache",
 }
+API_UA = "osu-mania-downloader/1.0"
 # Don't set Accept-Encoding: aiohttp negotiates gzip/deflate itself, and forcing
 # br would leave every response undecodable.
 FILE_TIMEOUT = 600  # hard cap per file, seconds
@@ -473,14 +476,27 @@ async def get_token(session: aiohttp.ClientSession, cid: str, secret: str) -> st
     }
     async with session.post("https://osu.ppy.sh/oauth/token", json=payload) as r:
         if r.status != 200:
-            bad = load_saved()
-            if bad.pop("client_id", None) or bad.pop("client_secret", None):
-                save_saved(bad)
+            detail = (await r.text())[:200].strip()
+            if r.status in (400, 401):
+                # osu! says the credentials themselves are wrong: forget them.
+                bad = load_saved()
+                if "client_id" in bad or "client_secret" in bad:
+                    bad.pop("client_id", None)
+                    bad.pop("client_secret", None)
+                    save_saved(bad)
+                    console.print(
+                        "[yellow]Saved credentials removed; you'll be asked again "
+                        "next run.[/]"
+                    )
+                console.print(Panel(GUIDE, title="Auth failed - check your keys"))
+            else:
+                # 403/429/5xx are osu!'s edge, not your keys: keep them saved.
                 console.print(
-                    "[yellow]Saved credentials removed; you'll be asked again next run.[/]"
+                    f"[yellow]osu! refused the token request (HTTP {r.status}). "
+                    "That's their server, not your keys; saved credentials were "
+                    "kept. Try again in a minute.[/]"
                 )
-            console.print(Panel(GUIDE, title="Auth failed - check your keys"))
-            raise SystemExit(f"Auth failed (HTTP {r.status}).")
+            raise SystemExit(f"Auth failed (HTTP {r.status}). {detail}")
         return (await r.json())["access_token"]
 
 
@@ -564,7 +580,9 @@ async def search_sets(session, token, cfg, status, existing) -> list:
 # ---- downloading ----------------------------------------------------------
 async def fetch(session, url, part: Path, progress, tid) -> None:
     async with session.get(
-        url, allow_redirects=True, headers=mirror_headers(url)
+        url,
+        allow_redirects=True,
+        headers={**BROWSER_HEADERS, **mirror_headers(url)},
     ) as r:
         if r.status == 429:
             try:
@@ -713,7 +731,7 @@ async def main() -> None:
         sock_connect=CONNECT_TIMEOUT,
         sock_read=SOCK_READ_TIMEOUT,
     )
-    headers = dict(BROWSER_HEADERS)
+    headers = {"User-Agent": API_UA}
     conn = aiohttp.TCPConnector(limit=cfg["workers"] * 2)
     async with aiohttp.ClientSession(
         timeout=timeout, headers=headers, connector=conn
