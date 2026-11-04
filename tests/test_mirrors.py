@@ -16,13 +16,12 @@ def make_cfg(folder: Path):
         "out": folder,
         "workers": 1,
         "batch": 1,
-        "safe_mode": True,
     }
 
 
 class FetchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        runtime.reset_run({"safe_mode": True})
+        runtime.reset_run()
 
     async def test_downloads_to_part_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,7 +121,7 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
 
 class ChooseMirrorTests(unittest.TestCase):
     def setUp(self):
-        runtime.reset_run({"safe_mode": True})
+        runtime.reset_run()
 
     def test_returns_a_ready_mirror(self):
         mirror, wait = mirrors.choose_mirror(0)
@@ -156,7 +155,7 @@ class DownloadSetTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             cfg = make_cfg(folder)
-            runtime.reset_run(cfg)
+            runtime.reset_run()
             status = state.Status(folder).load()
             data = make_osz_bytes()
             session = FakeSession(
@@ -186,7 +185,7 @@ class DownloadSetTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             cfg = make_cfg(folder)
-            runtime.reset_run(cfg)
+            runtime.reset_run()
             status = state.Status(folder).load()
             session = FakeSession(
                 [FakeResponse(status=404) for _ in range(len(MIRRORS))]
@@ -214,7 +213,7 @@ class DownloadSetTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             cfg = make_cfg(folder)
-            runtime.reset_run(cfg)
+            runtime.reset_run()
             status = state.Status(folder).load()
             session = FakeSession(
                 [FakeResponse(chunks=[b"<html>nope</html>"])]

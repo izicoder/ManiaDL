@@ -46,6 +46,13 @@ def save_saved(data: dict) -> None:
 def migrate_saved(saved: dict) -> tuple[dict, bool]:
     """Fill new optional keys without touching existing values."""
     changed = False
+    # safe_mode was an internal pacing toggle that briefly leaked into config.
+    if "safe_mode" in saved:
+        saved.pop("safe_mode", None)
+        changed = True
+    if "slide_window" in saved:
+        saved.pop("slide_window", None)
+        changed = True
     for key in NEW_SETTING_KEYS:
         if key not in saved:
             saved[key] = NEW_DEFAULTS[key]
@@ -84,7 +91,6 @@ def cfg_from_raw(raw: dict) -> dict:
     limit = max(1, _to_int(raw.get("limit"), 500))
     workers = max(1, min(MAX_WORKERS, _to_int(raw.get("workers"), 4)))
     batch = max(1, _to_int(raw.get("batch"), 20))
-    safe_mode = util.as_bool(raw.get("safe_mode", True))
     advanced = util.as_bool(raw.get("advanced", False))
 
     cfg = {
@@ -96,10 +102,8 @@ def cfg_from_raw(raw: dict) -> dict:
         "min_favs": min_favs,
         "sort": sort,
         "limit": limit,
-        "slide_window": util.as_bool(raw.get("slide_window", False)),
         "workers": workers,
         "batch": batch,
-        "safe_mode": safe_mode,
         "advanced": advanced,
     }
 
@@ -195,8 +199,8 @@ def risk_items(cfg: dict) -> list[tuple[str, str]]:
         items.append(
             (
                 "high",
-                f"{cfg['workers']} parallel downloads is aggressive. Strict mode "
-                "spaces requests per host, but 4-6 workers is much safer.",
+                f"{cfg['workers']} parallel downloads is aggressive. Requests "
+                "are spaced per host, but 4-6 workers is much safer.",
             )
         )
     elif cfg["workers"] > 4:
@@ -216,28 +220,12 @@ def risk_items(cfg: dict) -> list[tuple[str, str]]:
                 "20-40 is gentler.",
             )
         )
-    if cfg["slide_window"]:
-        items.append(
-            (
-                "medium",
-                "Sliding window keeps paging the osu! API past already-downloaded "
-                "sets. Large libraries can hit API rate limits.",
-            )
-        )
     if cfg["limit"] > 2000:
         items.append(
             (
                 "medium",
                 f"Fetching {cfg['limit']} sets means many API pages and mirror "
                 "requests. Consider splitting the run.",
-            )
-        )
-    if not cfg["safe_mode"]:
-        items.append(
-            (
-                "high",
-                "Strict anti-ban mode is off. Requests are still spaced, but "
-                "concurrency and retry delays are more aggressive.",
             )
         )
     if (

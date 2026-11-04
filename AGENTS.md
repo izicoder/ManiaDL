@@ -76,10 +76,11 @@ Main flow:
 - `failed_links.txt` in the output folder lists every failed set with the
   official page and all mirror URLs. It is regenerated/removed each run.
 - Config shape: `client_id`, `client_secret`, legacy `SETTING_KEYS`
-  (`out, statuses, keys, min_sr, max_sr, min_favs, sort, limit, slide_window,
-  workers, batch`) plus new keys (`safe_mode, advanced, query, title, artist,
-  creator, source, exclude, genre, language, bpm_range, length_range,
-  notes_range, min_plays, ranked_range, include_nsfw`).
+  (`out, statuses, keys, min_sr, max_sr, min_favs, sort, limit, workers,
+  batch`) plus new keys (`advanced, query, title, artist, creator, source,
+  exclude, genre, language, bpm_range, length_range, notes_range, min_plays,
+  ranked_range, include_nsfw`). Retired `safe_mode` / `slide_window` keys are
+  dropped by `migrate_saved()`.
 - Status mapping `STATUS_SETS` (e.g. `ranked` → `{ranked, approved}`); API
   statuses live in `API_STATUSES` (e.g. `pending` → `pending` + `wip`).
 - External services: osu! v2 API (`https://osu.ppy.sh/api/v2`, token at
@@ -94,11 +95,13 @@ Main flow:
   `runtime.mstats`; the run stops when all mirrors are parked.
 - Do not write `status.json` non-atomically or by hand; `Status.save()` owns it.
   Saves are batched (`SAVE_EVERY` / `SAVE_INTERVAL`) and flushed per batch.
-- Do not drop or rename `SETTING_KEYS`; `main()` requires all of them to reuse an
-  old config. New keys belong in `NEW_SETTING_KEYS` with defaults.
+- Do not drop or rename `SETTING_KEYS` casually; `main()` requires all of them to
+  reuse an old config. Extra old keys are ignored, and retired keys can be
+  dropped in `migrate_saved()`. New keys belong in `NEW_SETTING_KEYS`.
 - Do not import or extend `dl.old.py`.
-- Keep strict anti-ban mode on by default: per-host spacing, per-host
-  concurrency cap, jittered backoff, and `Retry-After` respect.
+- Request pacing is internal and always on: per-host spacing, per-host
+  concurrency cap, jittered backoff, and `Retry-After` respect. It is not a
+  user-facing setting; do not add prompts or warnings for it.
 
 ## Infrastructure
 
@@ -145,8 +148,8 @@ Main flow:
   prefix).
 - A 403/404 is `MirrorMiss` (try another mirror); a 429 parks the host. Adding
   sleep-and-retry on 429 is how the IP gets banned — the stop is intentional.
-- `slide_window=false` caps total matches at `limit`; `true` keeps paging until
-  `limit` *new* sets are found. Changing it changes result counts, not filters.
+- `limit` caps total matches; already-downloaded sets are filtered out after
+  the search, so raise `limit` when you want to reach further into the results.
 - Advanced filters are applied twice: a server-side `q` narrows the search, and
   `api.qualifies()` is authoritative. If osu! rejects the query (HTTP 400),
   `search_sets()` falls back to fewer server-side filters automatically.

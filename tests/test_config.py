@@ -15,7 +15,6 @@ def legacy_raw(**overrides):
         "min_favs": 10,
         "sort": "favourites_desc",
         "limit": 50,
-        "slide_window": False,
         "workers": 4,
         "batch": 20,
     }
@@ -27,7 +26,6 @@ def advanced_raw(**overrides):
     raw = legacy_raw()
     raw.update(
         {
-            "safe_mode": True,
             "advanced": True,
             "query": "camellia",
             "title": "ghost",
@@ -50,9 +48,9 @@ def advanced_raw(**overrides):
 
 
 class CfgFromRawTests(unittest.TestCase):
-    def test_old_config_gets_safe_defaults(self):
+    def test_old_config_gets_defaults(self):
         cfg = config.cfg_from_raw(legacy_raw())
-        self.assertTrue(cfg["safe_mode"])
+        self.assertNotIn("safe_mode", cfg)
         self.assertFalse(cfg["advanced"])
         self.assertEqual(cfg["query"], "")
         self.assertEqual(cfg["exclude"], [])
@@ -96,11 +94,18 @@ class CfgFromRawTests(unittest.TestCase):
 
 class MigrationTests(unittest.TestCase):
     def test_migrate_fills_new_keys_only(self):
-        saved = {"client_id": "1", "client_secret": "secret", "workers": 9}
+        saved = {
+            "client_id": "1",
+            "client_secret": "secret",
+            "workers": 9,
+            "safe_mode": False,
+            "slide_window": True,
+        }
         migrated, changed = config.migrate_saved(saved)
         self.assertTrue(changed)
         self.assertEqual(migrated["workers"], 9)
-        self.assertTrue(migrated["safe_mode"])
+        self.assertNotIn("safe_mode", migrated)
+        self.assertNotIn("slide_window", migrated)
         self.assertFalse(migrated["advanced"])
         self.assertEqual(migrated["query"], "")
 
@@ -117,7 +122,7 @@ class RiskTests(unittest.TestCase):
 
     def test_high_risk_settings(self):
         cfg = config.cfg_from_raw(
-            legacy_raw(statuses="any", workers=16, safe_mode=False, batch=80)
+            legacy_raw(statuses="any", workers=16, batch=80)
         )
         items = config.risk_items(cfg)
         levels = {level for level, _ in items}
@@ -125,14 +130,6 @@ class RiskTests(unittest.TestCase):
         messages = " ".join(message for _, message in items)
         self.assertIn("any", messages)
         self.assertIn("16", messages)
-        self.assertIn("Strict anti-ban", messages)
-
-    def test_slide_window_warning(self):
-        cfg = config.cfg_from_raw(legacy_raw(slide_window=True, limit=5000))
-        messages = " ".join(message for _, message in config.risk_items(cfg))
-        self.assertIn("Sliding window", messages)
-        self.assertIn("5000", messages)
-
 
 class StatusAllowedTests(unittest.TestCase):
     def test_any_allows_everything(self):

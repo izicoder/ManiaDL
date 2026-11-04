@@ -12,13 +12,7 @@ from collections import deque
 from rich.console import Console
 
 from . import util
-from .constants import (
-    BALANCED_HOST_CONCURRENCY,
-    BALANCED_HOST_INTERVAL,
-    MIRRORS,
-    SAFE_HOST_CONCURRENCY,
-    SAFE_HOST_INTERVAL,
-)
+from .constants import HOST_CONCURRENCY, HOST_INTERVAL, MIRRORS
 
 console = Console()
 
@@ -39,17 +33,17 @@ mstats = {
 host_state: dict[str, dict] = {}
 
 mirrors_exhausted = False
-HOST_MIN_INTERVAL = SAFE_HOST_INTERVAL
-HOST_MAX_CONCURRENCY = SAFE_HOST_CONCURRENCY
+HOST_MIN_INTERVAL = HOST_INTERVAL
+HOST_MAX_CONCURRENCY = HOST_CONCURRENCY
 
 
 def log(message: str) -> None:
     log_lines.append(f"[dim]{time.strftime('%H:%M:%S')}[/] {message}")
 
 
-def reset_run(cfg: dict) -> None:
-    """Reset counters and choose strict/balanced anti-ban settings."""
-    global mirrors_exhausted, HOST_MIN_INTERVAL, HOST_MAX_CONCURRENCY
+def reset_run() -> None:
+    """Reset counters and pacing state between runs."""
+    global mirrors_exhausted
 
     stats.update(ok=0, fail=0, active=0, bytes=0)
     for entry in mstats.values():
@@ -57,11 +51,4 @@ def reset_run(cfg: dict) -> None:
     host_state.clear()
     log_lines.clear()
     mirrors_exhausted = False
-
-    if cfg.get("safe_mode", True):
-        HOST_MIN_INTERVAL = SAFE_HOST_INTERVAL
-        HOST_MAX_CONCURRENCY = SAFE_HOST_CONCURRENCY
-    else:
-        HOST_MIN_INTERVAL = BALANCED_HOST_INTERVAL
-        HOST_MAX_CONCURRENCY = BALANCED_HOST_CONCURRENCY
     util.reset_disk_cache()

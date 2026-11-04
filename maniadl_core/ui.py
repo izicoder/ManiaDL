@@ -84,18 +84,6 @@ def print_banner() -> None:
             padding=(0, 2),
         )
     )
-    runtime.console.print(
-        Panel(
-            "[bold]Anti-ban notice[/]\n"
-            "Only the public osu! API and community mirrors are used. Strict "
-            "mode spaces requests per host, caps concurrency and stops when "
-            "mirrors ask you to slow down.\n"
-            "Bulk downloading can still violate a mirror's terms. Keep workers "
-            "modest, leave strict mode on, and stop if you see repeated 429s.",
-            border_style="yellow",
-            title="Please read",
-        )
-    )
 
 
 def ask_config(saved: dict) -> tuple[dict, dict]:
@@ -160,13 +148,6 @@ def ask_config(saved: dict) -> tuple[dict, dict]:
         default=_int_default(saved, "limit", 500),
         console=runtime.console,
     )
-    raw["slide_window"] = Confirm.ask(
-        "Slide past already-downloaded sets? "
-        "(keep paging until it finds that many new ones; no = stop at the first "
-        "N matches)",
-        default=util.as_bool(saved.get("slide_window", False)),
-        console=runtime.console,
-    )
     raw["workers"] = IntPrompt.ask(
         "Parallel downloads",
         default=_int_default(saved, "workers", 4),
@@ -175,12 +156,6 @@ def ask_config(saved: dict) -> tuple[dict, dict]:
     raw["batch"] = IntPrompt.ask(
         "Batch size",
         default=_int_default(saved, "batch", 20),
-        console=runtime.console,
-    )
-    raw["safe_mode"] = Confirm.ask(
-        "Strict anti-ban mode? (per-host spacing, capped concurrency, "
-        "jittered retries)",
-        default=util.as_bool(saved.get("safe_mode", True)),
         console=runtime.console,
     )
 
@@ -314,11 +289,7 @@ def show_summary(cfg: dict) -> None:
     basic.add_row("Min favourites", str(cfg["min_favs"]))
     basic.add_row("Sort", cfg["sort"])
     basic.add_row("Max sets", str(cfg["limit"]))
-    basic.add_row("Sliding window", "yes" if cfg["slide_window"] else "no")
     basic.add_row("Parallel / batch", f"{cfg['workers']} / {cfg['batch']}")
-    basic.add_row(
-        "Anti-ban mode", "strict" if cfg["safe_mode"] else "balanced"
-    )
 
     group = [basic]
     if cfg["advanced"]:
@@ -393,10 +364,6 @@ def show_risk_report(cfg: dict) -> bool:
             title="Safety check",
             border_style="red" if high else "yellow",
         )
-    )
-    runtime.console.print(
-        "[bold]Mirrors are community-run. Keep strict mode on and stop if you "
-        "see repeated 429s.[/]"
     )
     return high
 

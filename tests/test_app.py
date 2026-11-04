@@ -48,7 +48,6 @@ def legacy_saved(folder: Path) -> dict:
         "min_favs": 0,
         "sort": "favourites_desc",
         "limit": 10,
-        "slide_window": False,
         "workers": 1,
         "batch": 5,
     }

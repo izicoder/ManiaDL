@@ -17,7 +17,6 @@ def make_cfg(**overrides):
         "min_favs": 0,
         "sort": "favourites_desc",
         "limit": 10,
-        "slide_window": False,
         "workers": 1,
         "batch": 1,
     }
@@ -220,7 +219,7 @@ class SearchOneTests(unittest.IsolatedAsyncioTestCase):
 
         with patch("maniadl_core.api.search_delay", return_value=0):
             await api.search_one(
-                session, {}, {"m": "3"}, cfg, found, spinner, set()
+                session, {}, {"m": "3"}, cfg, found, spinner
             )
 
         self.assertEqual(set(found), {1, 3})
@@ -234,7 +233,7 @@ class SearchOneTests(unittest.IsolatedAsyncioTestCase):
         session = FakeSession([FakeResponse(status=400, text_data="bad query")])
         with self.assertRaises(api.SearchRejected):
             await api.search_one(
-                session, {}, {"m": "3"}, make_cfg(), {}, FakeSpinner(), set()
+                session, {}, {"m": "3"}, make_cfg(), {}, FakeSpinner()
             )
 
     async def test_429_waits_and_retries(self):
@@ -248,7 +247,7 @@ class SearchOneTests(unittest.IsolatedAsyncioTestCase):
             "maniadl_core.api.asyncio.sleep", new=AsyncMock()
         ):
             await api.search_one(
-                session, {}, {"m": "3"}, make_cfg(), {}, FakeSpinner(), set()
+                session, {}, {"m": "3"}, make_cfg(), {}, FakeSpinner()
             )
         self.assertEqual(len(session.get_calls), 2)
 
@@ -271,7 +270,7 @@ class SearchSetsFallbackTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch("maniadl_core.api.search_delay", return_value=0):
             sets = await api.search_sets(
-                session, "token", cfg, FakeSpinner(), set()
+                session, "token", cfg, FakeSpinner()
             )
         self.assertEqual([item["id"] for item in sets], [1])
         self.assertEqual(len(session.get_calls), 2)

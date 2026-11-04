@@ -18,17 +18,13 @@ from .constants import (
     BATCH_PAUSE,
     CONNECT_TIMEOUT,
     MIN_FREE_GB,
-    SAFE_BATCH_MULTIPLIER,
     SETTING_KEYS,
     SOCK_READ_TIMEOUT,
 )
 
 
 def batch_pause(cfg: dict) -> float:
-    base = BATCH_PAUSE * (
-        SAFE_BATCH_MULTIPLIER if cfg.get("safe_mode", True) else 1.0
-    )
-    return max(base, cfg["workers"] * 0.5) + random.uniform(0.0, 1.0)
+    return max(BATCH_PAUSE, cfg["workers"] * 0.5) + random.uniform(0.0, 1.0)
 
 
 async def _run_downloads(session, cfg: dict, todo: list, status: state.Status):
@@ -179,7 +175,7 @@ async def main() -> None:
     for leftover in cfg["out"].glob("*.part"):
         leftover.unlink(missing_ok=True)
 
-    runtime.reset_run(cfg)
+    runtime.reset_run()
     status = state.Status(cfg["out"]).load()
 
     timeout = aiohttp.ClientTimeout(
@@ -212,9 +208,7 @@ async def main() -> None:
             )
 
         with runtime.console.status("[cyan]Searching osu!...[/]") as spinner:
-            sets = await api.search_sets(
-                session, token, cfg, spinner, existing
-            )
+            sets = await api.search_sets(session, token, cfg, spinner)
 
         todo = [set_data for set_data in sets if set_data["id"] not in existing]
         ui.show_search_summary(sets, todo, existing, cfg)

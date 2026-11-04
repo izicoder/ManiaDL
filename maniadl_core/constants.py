@@ -38,8 +38,6 @@ BROWSER_HEADERS = {
 RETRIES = 6
 SEARCH_RETRIES = 5
 SEARCH_MAX_PAGES = 1000
-SEARCH_DELAY = 1.0
-BATCH_PAUSE = 2.0
 FILE_TIMEOUT = 900
 SOCK_READ_TIMEOUT = 120
 CONNECT_TIMEOUT = 15
@@ -48,14 +46,12 @@ CHUNK_SIZE = 128 * 1024
 MAX_WORKERS = 32
 MAX_RETRY_AFTER = 300
 
-# Strict anti-ban mode. These values are intentionally conservative: mirrors
-# are community-run and a single hammering client can get a whole IP blocked.
-SAFE_HOST_INTERVAL = 0.9
-BALANCED_HOST_INTERVAL = 0.35
-SAFE_HOST_CONCURRENCY = 2
-BALANCED_HOST_CONCURRENCY = 3
-SAFE_SEARCH_MULTIPLIER = 1.8
-SAFE_BATCH_MULTIPLIER = 1.5
+# Community mirrors are rate-limited automatically: requests are spaced per
+# host, concurrency is capped and 429s park the host. No user toggle.
+HOST_INTERVAL = 0.9
+HOST_CONCURRENCY = 2
+SEARCH_DELAY = 1.8
+BATCH_PAUSE = 3.0
 
 # Status persistence is batched to avoid rewriting JSON on every set.
 SAVE_EVERY = 8
@@ -115,14 +111,12 @@ SETTING_KEYS = [
     "min_favs",
     "sort",
     "limit",
-    "slide_window",
     "workers",
     "batch",
 ]
 
 # New optional keys are filled with defaults on first run of this version.
 NEW_SETTING_KEYS = [
-    "safe_mode",
     "advanced",
     "query",
     "title",
@@ -157,7 +151,6 @@ ADVANCED_KEYS = [
 ]
 
 NEW_DEFAULTS = {
-    "safe_mode": True,
     "advanced": False,
     "query": "",
     "title": "",

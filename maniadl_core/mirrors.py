@@ -296,8 +296,7 @@ async def download_set(
                         runtime.log("[red]Low disk space, stopping this set.[/]")
                         break
                     delay = min(2**attempt + random.uniform(0, 1.5), 45)
-                    if cfg.get("safe_mode", True):
-                        delay *= 1.25
+                    delay *= 1.25
                     if is_payload:
                         delay = max(delay, 10)
                     await asyncio.sleep(delay)

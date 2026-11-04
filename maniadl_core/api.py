@@ -35,9 +35,8 @@ class SearchRejected(Exception):
     """osu! returned HTTP 400 for the query; retry with fewer server filters."""
 
 
-def search_delay(cfg: dict) -> float:
-    multiplier = 1.8 if cfg.get("safe_mode", True) else 1.0
-    return SEARCH_DELAY * multiplier + random.uniform(0.0, 0.5)
+def search_delay() -> float:
+    return SEARCH_DELAY + random.uniform(0.0, 0.5)
 
 
 async def get_token(session: aiohttp.ClientSession, cid, secret: str) -> str:
@@ -316,12 +315,6 @@ def minimal_query(cfg: dict, key: int | None) -> str:
     return " ".join(part for part in parts if part)
 
 
-def new_matches(found: dict, existing: set[int], slide: bool) -> int:
-    if not slide:
-        return len(found)
-    return sum(1 for sid in found if sid not in existing)
-
-
 async def search_one(
     session,
     headers,
@@ -329,13 +322,12 @@ async def search_one(
     cfg,
     found,
     status,
-    existing,
 ) -> None:
     cursor = None
     seen_cursors: set[str] = set()
     pages = 0
 
-    while new_matches(found, existing, cfg["slide_window"]) < cfg["limit"]:
+    while len(found) < cfg["limit"]:
         query = dict(params)
         if cursor:
             query["cursor_string"] = cursor
@@ -390,8 +382,7 @@ async def search_one(
                 found[set_data["id"]] = set_data
 
         status.update(
-            f"Searching... {new_matches(found, existing, cfg['slide_window'])} "
-            "matching sets"
+            f"Searching... {len(found)} matching sets"
         )
 
         cursor = data.get("cursor_string")
@@ -404,10 +395,10 @@ async def search_one(
         if pages >= SEARCH_MAX_PAGES:
             runtime.log("[yellow]![/] search page cap reached; stopping search.")
             break
-        await asyncio.sleep(search_delay(cfg))
+        await asyncio.sleep(search_delay())
 
 
-async def search_sets(session, token, cfg, status, existing) -> list:
+async def search_sets(session, token, cfg, status) -> list:
     headers = {"Authorization": f"Bearer {token}", "User-Agent": API_UA}
     found: dict = {}
     key_list = cfg["keys"] if cfg["keys"] is not None else [None]
@@ -422,7 +413,7 @@ async def search_sets(session, token, cfg, status, existing) -> list:
                     combos.append(combo)
 
     for api_status, key in combos:
-        if new_matches(found, existing, cfg["slide_window"]) >= cfg["limit"]:
+        if len(found) >= cfg["limit"]:
             break
 
         params = {
@@ -438,7 +429,7 @@ async def search_sets(session, token, cfg, status, existing) -> list:
 
         try:
             await search_one(
-                session, headers, params, cfg, found, status, existing
+                session, headers, params, cfg, found, status
             )
         except SearchRejected as exc:
             runtime.log(
@@ -453,7 +444,7 @@ async def search_sets(session, token, cfg, status, existing) -> list:
                 fallback.pop("q", None)
             try:
                 await search_one(
-                    session, headers, fallback, cfg, found, status, existing
+                    session, headers, fallback, cfg, found, status
                 )
             except SearchRejected:
                 fallback.pop("q", None)
@@ -462,10 +453,8 @@ async def search_sets(session, token, cfg, status, existing) -> list:
                     "query. Client-side filters still apply."
                 )
                 await search_one(
-                    session, headers, fallback, cfg, found, status, existing
+                    session, headers, fallback, cfg, found, status
                 )
 
     sets = list(found.values())
-    if not cfg["slide_window"]:
-        sets = sets[: cfg["limit"]]
-    return sets
+    return sets[: cfg["limit"]]

@@ -20,10 +20,8 @@ def make_cfg(**overrides):
         "min_favs": 10,
         "sort": "favourites_desc",
         "limit": 50,
-        "slide_window": False,
         "workers": 4,
         "batch": 20,
-        "safe_mode": True,
         "advanced": True,
         "query": "camellia",
         "title": "ghost",
@@ -61,7 +59,7 @@ class LabelTests(unittest.TestCase):
 
 class RenderingTests(unittest.TestCase):
     def setUp(self):
-        runtime.reset_run({"safe_mode": True})
+        runtime.reset_run()
 
     def test_summary_includes_advanced_filters(self):
         recording = Console(record=True, width=160, file=io.StringIO())
@@ -71,17 +69,15 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("Settings", output)
         self.assertIn("Title contains", output)
         self.assertIn("BPM", output)
-        self.assertIn("strict", output)
 
     def test_risk_report_high(self):
         recording = Console(record=True, width=160, file=io.StringIO())
-        cfg = make_cfg(statuses="any", workers=16, safe_mode=False)
+        cfg = make_cfg(statuses="any", workers=16)
         with patch.object(runtime, "console", recording):
             high = ui.show_risk_report(cfg)
         self.assertTrue(high)
         output = recording.export_text()
         self.assertIn("HIGH", output)
-        self.assertIn("community-run", output)
 
     def test_risk_report_clean(self):
         recording = Console(record=True, width=160, file=io.StringIO())
@@ -113,9 +109,9 @@ class RenderingTests(unittest.TestCase):
 
 class BatchPauseTests(unittest.TestCase):
     def test_pause_scales_with_workers(self):
-        cfg = make_cfg(workers=1, safe_mode=True)
+        cfg = make_cfg(workers=1)
         self.assertGreaterEqual(app.batch_pause(cfg), 3.0)
-        cfg = make_cfg(workers=8, safe_mode=False)
+        cfg = make_cfg(workers=8)
         self.assertGreaterEqual(app.batch_pause(cfg), 4.0)
 
 
