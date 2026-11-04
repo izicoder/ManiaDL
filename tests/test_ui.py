@@ -57,6 +57,72 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(ui._date_label("", "2024"), "<=2024")
 
 
+class AskConfigTests(unittest.TestCase):
+    def _saved(self):
+        return {
+            "out": "C:/tmp/m",
+            "statuses": "ranked",
+            "keys": "4",
+            "min_sr": 1,
+            "max_sr": 10,
+            "min_favs": 1,
+            "sort": "favourites_desc",
+            "limit": 100,
+            "workers": 4,
+            "batch": 16,
+            "advanced": True,
+            "query": "pack",
+            "title": "pack",
+            "artist": "artist",
+            "creator": "mapper",
+            "source": "game",
+            "exclude": "tv",
+            "genre": "electronic",
+            "language": "instrumental",
+            "bpm_range": "150-220",
+            "length_range": "60-300",
+            "notes_range": "1000-5000",
+            "min_plays": 10,
+            "ranked_range": "2020..2024",
+            "include_nsfw": True,
+        }
+
+    def _ask(self, confirm_answers):
+        with patch.object(ui.Prompt, "ask", return_value="") as prompt, patch.object(
+            ui.IntPrompt, "ask", return_value=0
+        ), patch.object(ui.FloatPrompt, "ask", return_value=0.0), patch.object(
+            ui.Confirm, "ask", side_effect=confirm_answers
+        ):
+            cfg, raw = ui.ask_config(self._saved())
+        return cfg, raw, prompt
+
+    def test_reset_clears_advanced_values(self):
+        cfg, raw, _ = self._ask([True, True, False])
+        self.assertEqual(raw["query"], "")
+        self.assertEqual(raw["title"], "")
+        self.assertEqual(raw["exclude"], "")
+        self.assertEqual(raw["bpm_range"], "")
+        self.assertEqual(raw["min_plays"], 0)
+        self.assertFalse(raw["include_nsfw"])
+        self.assertEqual(cfg["query"], "")
+        self.assertEqual(cfg["genre"], [])
+
+    def test_no_reset_keeps_old_values_as_defaults(self):
+        _, _, prompt = self._ask([False, True, True])
+        defaults = {
+            call.args[0]: call.kwargs.get("default")
+            for call in prompt.call_args_list
+        }
+        self.assertEqual(
+            defaults["osu! search query / free text "
+                     "(supports stars>=5, keys=4, title=..., ranked>=2020)"],
+            "pack",
+        )
+        self.assertEqual(defaults["Title contains"], "pack")
+        self.assertEqual(defaults["Genres (comma-separated, partial ok, blank=any)"],
+                         "electronic")
+
+
 class RenderingTests(unittest.TestCase):
     def setUp(self):
         runtime.reset_run()

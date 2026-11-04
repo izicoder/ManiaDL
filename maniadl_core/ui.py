@@ -88,6 +88,7 @@ def print_banner() -> None:
 
 def ask_config(saved: dict) -> tuple[dict, dict]:
     raw: dict = {}
+    saved = dict(saved)
 
     runtime.console.print("[bold cyan]Download settings[/]")
     raw["out"] = Prompt.ask(
@@ -158,6 +159,21 @@ def ask_config(saved: dict) -> tuple[dict, dict]:
         default=_int_default(saved, "batch", 20),
         console=runtime.console,
     )
+
+    has_advanced = any(
+        str(saved.get(key) or "").strip()
+        for key in ADVANCED_KEYS
+        if key not in ("include_nsfw", "min_plays")
+    ) or _int_default(saved, "min_plays", 0) > 0 or util.as_bool(
+        saved.get("include_nsfw", False)
+    )
+    if has_advanced and Confirm.ask(
+        "Reset saved advanced filters?",
+        default=False,
+        console=runtime.console,
+    ):
+        for key in ADVANCED_KEYS:
+            saved.pop(key, None)
 
     advanced_default = util.as_bool(saved.get("advanced", False)) or any(
         str(saved.get(key) or "").strip()
