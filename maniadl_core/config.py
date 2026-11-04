@@ -1,4 +1,4 @@
-"""Configuration loading, migration, validation and risk assessment."""
+"""Configuration loading, migration and validation."""
 
 from __future__ import annotations
 
@@ -170,78 +170,6 @@ def cfg_from_raw(raw: dict) -> dict:
             }
         )
     return cfg
-
-
-def risk_items(cfg: dict) -> list[tuple[str, str]]:
-    """Human-readable warnings for settings that can get an IP/account limited."""
-    items: list[tuple[str, str]] = []
-    statuses = set(cfg["statuses"])
-
-    if "any" in statuses:
-        items.append(
-            (
-                "high",
-                "Status 'any' includes graveyard and pending sets. Those are often "
-                "only on community mirrors and are the most likely to trigger "
-                "rate limits or mirror bans.",
-            )
-        )
-    elif "graveyard" in statuses:
-        items.append(
-            (
-                "medium",
-                "Graveyard sets are often only on community mirrors; expect more "
-                "failures and be gentle with retries.",
-            )
-        )
-
-    if cfg["workers"] > 8:
-        items.append(
-            (
-                "high",
-                f"{cfg['workers']} parallel downloads is aggressive. Requests "
-                "are spaced per host, but 4-6 workers is much safer.",
-            )
-        )
-    elif cfg["workers"] > 4:
-        items.append(
-            (
-                "medium",
-                f"{cfg['workers']} parallel downloads is above the conservative "
-                "range (4).",
-            )
-        )
-
-    if cfg["batch"] > 50:
-        items.append(
-            (
-                "medium",
-                f"Batch size {cfg['batch']} creates large request bursts. "
-                "20-40 is gentler.",
-            )
-        )
-    if cfg["limit"] > 2000:
-        items.append(
-            (
-                "medium",
-                f"Fetching {cfg['limit']} sets means many API pages and mirror "
-                "requests. Consider splitting the run.",
-            )
-        )
-    if (
-        cfg["advanced"]
-        and cfg["query"]
-        and "any" in statuses
-        and cfg["limit"] > 1000
-    ):
-        items.append(
-            (
-                "low",
-                "Broad query + 'any' status + a large limit can page through a lot "
-                "of the API. Narrow the query or lower the limit if possible.",
-            )
-        )
-    return items
 
 
 def status_allowed(cfg: dict, value: str) -> bool:

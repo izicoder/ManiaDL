@@ -115,22 +115,6 @@ class MigrationTests(unittest.TestCase):
         self.assertFalse(changed)
 
 
-class RiskTests(unittest.TestCase):
-    def test_clean_config_has_no_warnings(self):
-        cfg = config.cfg_from_raw(legacy_raw())
-        self.assertEqual(config.risk_items(cfg), [])
-
-    def test_high_risk_settings(self):
-        cfg = config.cfg_from_raw(
-            legacy_raw(statuses="any", workers=16, batch=80)
-        )
-        items = config.risk_items(cfg)
-        levels = {level for level, _ in items}
-        self.assertIn("high", levels)
-        messages = " ".join(message for _, message in items)
-        self.assertIn("any", messages)
-        self.assertIn("16", messages)
-
 class StatusAllowedTests(unittest.TestCase):
     def test_any_allows_everything(self):
         cfg = config.cfg_from_raw(legacy_raw(statuses="any"))

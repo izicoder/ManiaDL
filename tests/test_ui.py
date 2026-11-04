@@ -70,22 +70,6 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("Title contains", output)
         self.assertIn("BPM", output)
 
-    def test_risk_report_high(self):
-        recording = Console(record=True, width=160, file=io.StringIO())
-        cfg = make_cfg(statuses="any", workers=16)
-        with patch.object(runtime, "console", recording):
-            high = ui.show_risk_report(cfg)
-        self.assertTrue(high)
-        output = recording.export_text()
-        self.assertIn("HIGH", output)
-
-    def test_risk_report_clean(self):
-        recording = Console(record=True, width=160, file=io.StringIO())
-        with patch.object(runtime, "console", recording):
-            high = ui.show_risk_report(make_cfg())
-        self.assertFalse(high)
-        self.assertIn("No risky settings", recording.export_text())
-
     def test_search_summary(self):
         recording = Console(record=True, width=160, file=io.StringIO())
         with patch.object(runtime, "console", recording):

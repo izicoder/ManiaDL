@@ -338,36 +338,6 @@ def show_summary(cfg: dict) -> None:
     )
 
 
-def show_risk_report(cfg: dict) -> bool:
-    items = config.risk_items(cfg)
-    if not items:
-        runtime.console.print(
-            Panel(
-                "[green]No risky settings detected.[/]",
-                title="Safety check",
-                border_style="green",
-            )
-        )
-        return False
-
-    table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
-    table.add_column("Level", no_wrap=True)
-    table.add_column("Warning")
-    colors = {"high": "red", "medium": "yellow", "low": "cyan"}
-    for level, message in items:
-        table.add_row(f"[{colors[level]}]{level.upper()}[/]", message)
-
-    high = any(level == "high" for level, _ in items)
-    runtime.console.print(
-        Panel(
-            table,
-            title="Safety check",
-            border_style="red" if high else "yellow",
-        )
-    )
-    return high
-
-
 def show_search_summary(sets: list, todo: list, existing: set, cfg: dict) -> None:
     table = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
     table.add_column(style="bold cyan", no_wrap=True)

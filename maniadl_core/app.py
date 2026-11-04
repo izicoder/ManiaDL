@@ -130,19 +130,11 @@ async def main() -> None:
         try:
             cfg = config.cfg_from_raw(saved)
             ui.show_summary(cfg)
-            high_risk = ui.show_risk_report(cfg)
-            if high_risk:
-                accepted = Confirm.ask(
-                    "[bold red]High-risk settings detected. Continue anyway?[/]",
-                    default=False,
-                    console=runtime.console,
-                )
-            else:
-                accepted = Confirm.ask(
-                    "Use these settings?",
-                    default=True,
-                    console=runtime.console,
-                )
+            accepted = Confirm.ask(
+                "Use these settings?",
+                default=True,
+                console=runtime.console,
+            )
             if not accepted:
                 cfg = None
         except (KeyError, ValueError, TypeError) as exc:
@@ -156,17 +148,9 @@ async def main() -> None:
         saved.update(raw)
         config.save_saved(saved)
         ui.show_summary(cfg)
-        high_risk = ui.show_risk_report(cfg)
-        if high_risk:
-            accepted = Confirm.ask(
-                "[bold red]High-risk settings detected. Continue anyway?[/]",
-                default=False,
-                console=runtime.console,
-            )
-        else:
-            accepted = Confirm.ask(
-                "Use these settings?", default=True, console=runtime.console
-            )
+        accepted = Confirm.ask(
+            "Use these settings?", default=True, console=runtime.console
+        )
         if not accepted:
             runtime.console.print("[yellow]Cancelled.[/]")
             return

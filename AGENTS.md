@@ -32,9 +32,8 @@ and more; keeps per-folder download state.
 
 - `app.py` — `main()` orchestration: config -> auth -> search -> downloads ->
   report. Also owns batch pacing.
-- `config.py` — load/save config, migrate old configs, `cfg_from_raw()`,
-  `risk_items()`.
-- `ui.py` — rich banner, prompts (`ask_config`), settings/risk/search summaries,
+- `config.py` — load/save config, migrate old configs, `cfg_from_raw()`.
+- `ui.py` — rich banner, prompts (`ask_config`), settings/search summaries,
   live dashboard (`make_progress`, `render_dashboard`).
 - `api.py` — osu! OAuth token, search pagination, query building, client-side
   `qualifies()`, search-query fallback.
@@ -51,9 +50,8 @@ Main flow:
 1. `config.load_saved()` reads `mania_dl_config.json`; `migrate_saved()` fills
    new optional keys. Credentials are prompted once and saved (`save_saved`,
    atomic, chmod 0600).
-2. `cfg_from_raw()` validates settings. `ui.show_summary()` and
-   `ui.show_risk_report()` run before confirmation; high-risk settings require
-   an explicit opt-in.
+2. `cfg_from_raw()` validates settings. `ui.show_summary()` runs before
+   confirmation.
 3. `api.get_token()` exchanges client credentials for an OAuth access token.
 4. `api.search_sets()` loops API statuses × key counts, cursor-paginates
    `GET /beatmapsets/search`, and applies `qualifies()` client-side.
