@@ -56,6 +56,12 @@ class FakeSession:
         self.get_calls = []
         self.post_calls = []
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
     def get(self, url, **kwargs):
         self.get_calls.append((url, kwargs))
         if not self.get_responses:

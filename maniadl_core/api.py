@@ -427,10 +427,11 @@ async def search_sets(session, token, cfg, status, existing) -> list:
 
         params = {
             "m": "3",
-            "s": api_status,
             "sort": cfg["sort"],
             "nsfw": "true" if cfg["include_nsfw"] else "false",
         }
+        if api_status != "any":
+            params["s"] = api_status
         query = build_query(cfg, key)
         if query:
             params["q"] = query
