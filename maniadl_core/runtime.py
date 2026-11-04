@@ -1,23 +1,22 @@
-"""Mutable per-run state and the shared console.
+"""Mutable per-run state and the shared log feed.
 
 Keeping this in one module avoids circular imports between the UI, API and
-download layers.
+download layers. The GUI subscribes to :func:`log` through a listener so it can
+show events without polling a console.
 """
 
 from __future__ import annotations
 
+import re
+import threading
 import time
 from collections import deque
-
-from rich.console import Console
 
 from . import util
 from .constants import HOST_CONCURRENCY, HOST_INTERVAL, MIRRORS
 
-console = Console()
-
-# Last events shown in the live "Log" panel.
-log_lines: deque[str] = deque(maxlen=14)
+# Last events, kept for diagnostics and simple callers.
+log_lines: deque[str] = deque(maxlen=500)
 
 stats = {"ok": 0, "fail": 0, "active": 0, "bytes": 0}
 
@@ -36,9 +35,45 @@ mirrors_exhausted = False
 HOST_MIN_INTERVAL = HOST_INTERVAL
 HOST_MAX_CONCURRENCY = HOST_CONCURRENCY
 
+_listener = None
+_listener_lock = threading.Lock()
+
+# Rich-style tags still appear in a few log messages; strip them for the GUI.
+_MARKUP = re.compile(
+    r"\[/\]|\[(?:bold|dim|italic|underline|blink|reverse|conceal|strike|"
+    r"black|red|green|yellow|blue|magenta|cyan|white|bright_[a-z]+|"
+    r"on [a-z]+|link=[^\]]+)(?:\s+[a-z_]+)*\]",
+    re.I,
+)
+
+
+def plain(text: str) -> str:
+    """Remove rich-style markup so log lines are safe for plain widgets."""
+    return _MARKUP.sub("", str(text))
+
+
+def set_log_listener(listener) -> None:
+    """Register a callable that receives every plain log line.
+
+    The listener is invoked from the worker thread, so it must be thread-safe
+    (the GUI pushes lines onto a queue).
+    """
+    global _listener
+    with _listener_lock:
+        _listener = listener
+
 
 def log(message: str) -> None:
-    log_lines.append(f"[dim]{time.strftime('%H:%M:%S')}[/] {message}")
+    line = f"{time.strftime('%H:%M:%S')}  {plain(message)}"
+    log_lines.append(line)
+    with _listener_lock:
+        listener = _listener
+    if listener is not None:
+        try:
+            listener(line)
+        except Exception:
+            # A broken UI listener must never stop a download.
+            pass
 
 
 def reset_run() -> None:
