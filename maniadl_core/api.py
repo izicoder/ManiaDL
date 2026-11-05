@@ -6,7 +6,6 @@ import asyncio
 import random
 
 import aiohttp
-from rich.panel import Panel
 
 from . import config, runtime, util
 from .constants import (
@@ -19,14 +18,14 @@ from .constants import (
     TOKEN_URL,
 )
 
-GUIDE = """[bold]How to get your osu! API keys[/]
-1. Log in at [cyan]https://osu.ppy.sh[/].
-2. Open your settings: [cyan]https://osu.ppy.sh/home/account/edit[/]
-3. Scroll to the [bold]OAuth[/] section and click [bold]New OAuth Application[/].
-4. Name it anything (e.g. "mania dl"). Callback URL: [cyan]http://localhost[/]
-5. Click Register. You now see your [bold]Client ID[/] (a number) and
-   [bold]Client Secret[/] (a long string). Copy both. If you lose the secret,
-   you can reset it on the same page.
+GUIDE = """How to get your osu! API keys
+1. Log in at https://osu.ppy.sh.
+2. Open your settings: https://osu.ppy.sh/home/account/edit
+3. Scroll to the OAuth section and click New OAuth Application.
+4. Name it anything (e.g. "mania dl"). Callback URL: http://localhost
+5. Click Register. You now see your Client ID (a number) and Client Secret
+   (a long string). Copy both. If you lose the secret, you can reset it on
+   the same page.
 6. Keep the secret private. Never share it or post it publicly.
 """
 
@@ -70,28 +69,25 @@ async def get_token(session: aiohttp.ClientSession, cid, secret: str) -> str:
                     bad.pop("client_id", None)
                     bad.pop("client_secret", None)
                     config.save_saved(bad)
-                    runtime.console.print(
-                        "[yellow]Saved credentials removed; you'll be asked again "
-                        "next run.[/]"
+                    runtime.log(
+                        "Saved credentials removed; please check and re-enter them."
                     )
-                runtime.console.print(
-                    Panel(GUIDE, title="Auth failed - check your keys")
-                )
+                runtime.log(GUIDE)
                 raise SystemExit(f"Auth failed (HTTP {response.status}). {detail}")
 
             if response.status == 429 or response.status >= 500:
                 wait = util.retry_after(response.headers, 15)
-                runtime.console.print(
-                    f"[yellow]osu! token endpoint returned HTTP {response.status}; "
-                    f"waiting {wait}s before retry {attempt + 1}/3.[/]"
+                runtime.log(
+                    f"osu! token endpoint returned HTTP {response.status}; "
+                    f"waiting {wait}s before retry {attempt + 1}/3."
                 )
                 await asyncio.sleep(wait)
                 continue
 
-            runtime.console.print(
-                f"[yellow]osu! refused the token request (HTTP {response.status}). "
+            runtime.log(
+                f"osu! refused the token request (HTTP {response.status}). "
                 "That's their server, not your keys; saved credentials were kept. "
-                "Try again in a minute.[/]"
+                "Try again in a minute."
             )
             raise SystemExit(f"Auth failed (HTTP {response.status}). {detail}")
 
@@ -328,6 +324,8 @@ async def search_one(
     pages = 0
 
     while len(found) < cfg["limit"]:
+        if runtime.should_stop():
+            return
         query = dict(params)
         if cursor:
             query["cursor_string"] = cursor
@@ -413,7 +411,7 @@ async def search_sets(session, token, cfg, status) -> list:
                     combos.append(combo)
 
     for api_status, key in combos:
-        if len(found) >= cfg["limit"]:
+        if len(found) >= cfg["limit"] or runtime.should_stop():
             break
 
         params = {

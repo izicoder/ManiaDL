@@ -40,7 +40,7 @@ def save_saved(data: dict) -> None:
     except OSError as exc:
         from . import runtime
 
-        runtime.console.print(f"[yellow]Couldn't save settings: {exc}[/]")
+        runtime.log(f"Couldn't save settings: {exc}")
 
 
 def migrate_saved(saved: dict) -> tuple[dict, bool]:

@@ -36,6 +36,10 @@ class RateLimited(Exception):
         self.seconds = seconds
 
 
+class Stopped(Exception):
+    """The user pressed Stop; abandon this transfer without recording a failure."""
+
+
 def _host_state(host: str) -> dict:
     state = runtime.host_state.get(host)
     if state is None:
@@ -187,6 +191,8 @@ async def fetch(session, url: str, part: Path, progress, tid) -> None:
             received = start
             with open(part, mode) as handle:
                 async for chunk in response.content.iter_chunked(CHUNK_SIZE):
+                    if runtime.should_stop():
+                        raise Stopped()
                     handle.write(chunk)
                     received += len(chunk)
                     runtime.stats["bytes"] += len(chunk)
@@ -227,6 +233,9 @@ async def download_set(
                 return
 
             for attempt in range(RETRIES):
+                if runtime.should_stop():
+                    runtime.log(f"Stopping before {sid}.")
+                    break
                 if util.free_gb(cfg["out"]) < MIN_FREE_GB:
                     runtime.log("[red]Low disk space, stopping this set.[/]")
                     break
@@ -266,6 +275,9 @@ async def download_set(
                 except RateLimited as exc:
                     park_host(template, exc.seconds)
                     _reset_progress(part, progress, tid)
+                except Stopped:
+                    runtime.log(f"Stopped {sid}.")
+                    return
                 except MirrorMiss as exc:
                     tried.add(name)
                     runtime.mstats[name]["fail"] += 1
@@ -300,6 +312,10 @@ async def download_set(
                     if is_payload:
                         delay = max(delay, 10)
                     await asyncio.sleep(delay)
+
+            if runtime.should_stop():
+                # Leave the set untouched; it stays in the queue for next run.
+                return
 
             runtime.stats["fail"] += 1
             failed[sid] = title

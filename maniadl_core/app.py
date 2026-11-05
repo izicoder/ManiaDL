@@ -1,83 +1,79 @@
-"""Application orchestration: config -> auth -> search -> downloads -> report."""
+"""Application orchestration: auth -> search -> downloads.
+
+The GUI calls :func:`run` from a worker thread. Nothing in here prompts or
+prints; progress goes to a :class:`~maniadl_core.progress.TaskBoard` and log
+lines go through :func:`maniadl_core.runtime.log`.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import getpass
-import os
 import random
 import time
 
 import aiohttp
-from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
 
-from . import api, config, mirrors, reports, runtime, state, ui, util
+from . import api, mirrors, runtime, state, util
 from .constants import (
     API_UA,
     BATCH_PAUSE,
     CONNECT_TIMEOUT,
+    FAILED_LINKS_NAME,
     MIN_FREE_GB,
-    SETTING_KEYS,
     SOCK_READ_TIMEOUT,
 )
+from .progress import StatusSink, TaskBoard
 
 
 def batch_pause(cfg: dict) -> float:
     return max(BATCH_PAUSE, cfg["workers"] * 0.5) + random.uniform(0.0, 1.0)
 
 
-async def _run_downloads(session, cfg: dict, todo: list, status: state.Status):
-    progress, overall = ui.make_progress()
+async def _run_downloads(
+    session, cfg: dict, todo: list, status: state.Status, progress, overall
+):
     otid = overall.add_task("all", total=len(todo))
     started = time.time()
     failed: dict[int, str] = {}
     sem = asyncio.Semaphore(cfg["workers"])
 
-    def render():
-        return ui.render_dashboard(cfg, started, overall, progress)
-
     try:
-        from rich.live import Live
-
-        with Live(
-            get_renderable=render,
-            refresh_per_second=6,
-            console=runtime.console,
-            transient=False,
-        ):
-            for index in range(0, len(todo), cfg["batch"]):
-                if util.free_gb(cfg["out"]) < MIN_FREE_GB:
-                    runtime.log("[red]Low disk space, stopping.[/]")
-                    break
-                batch = todo[index : index + cfg["batch"]]
+        for index in range(0, len(todo), cfg["batch"]):
+            if runtime.should_stop():
+                runtime.log("Stopped by user.")
+                break
+            if util.free_gb(cfg["out"]) < MIN_FREE_GB:
+                runtime.log("[red]Low disk space, stopping.[/]")
+                break
+            batch = todo[index : index + cfg["batch"]]
+            runtime.log(f"Batch {index // cfg['batch'] + 1}: {len(batch)} sets")
+            await asyncio.gather(
+                *(
+                    mirrors.download_set(
+                        session,
+                        set_data,
+                        cfg,
+                        progress,
+                        overall,
+                        otid,
+                        sem,
+                        failed,
+                        status,
+                    )
+                    for set_data in batch
+                )
+            )
+            status.flush()
+            if runtime.should_stop():
+                runtime.log("Stopped by user.")
+                break
+            await asyncio.sleep(batch_pause(cfg))
+            if runtime.mirrors_exhausted:
                 runtime.log(
-                    f"Batch {index // cfg['batch'] + 1}: {len(batch)} sets"
+                    "[red]Every mirror is rate-limiting us; stopping instead "
+                    "of hammering them. Re-run later.[/]"
                 )
-                await asyncio.gather(
-                    *(
-                        mirrors.download_set(
-                            session,
-                            set_data,
-                            cfg,
-                            progress,
-                            overall,
-                            otid,
-                            sem,
-                            failed,
-                            status,
-                        )
-                        for set_data in batch
-                    )
-                )
-                status.flush()
-                await asyncio.sleep(batch_pause(cfg))
-                if runtime.mirrors_exhausted:
-                    runtime.log(
-                        "[red]Every mirror is rate-limiting us; stopping instead "
-                        "of hammering them. Re-run later.[/]"
-                    )
-                    break
+                break
     finally:
         for leftover in cfg["out"].glob("*.part"):
             leftover.unlink(missing_ok=True)
@@ -85,81 +81,26 @@ async def _run_downloads(session, cfg: dict, todo: list, status: state.Status):
     return failed, time.time() - started
 
 
-def _print_done(cfg: dict, elapsed: float) -> None:
-    failed = runtime.stats["fail"]
-    border = "green" if not failed else "yellow"
-    runtime.console.print(
-        Panel(
-            f"[green]{runtime.stats['ok']} downloaded[/]  "
-            f"[red]{failed} failed[/]  "
-            f"{runtime.stats['bytes'] / 1e6:,.1f} MB in {elapsed:.1f}s\n"
-            f"Files in {cfg['out']}",
-            title="Done",
-            border_style=border,
-        )
-    )
-
-
-async def main() -> None:
-    ui.print_banner()
-
-    saved = config.load_saved()
-    saved, migrated = config.migrate_saved(saved)
-    if migrated and (saved.get("client_id") or saved.get("client_secret")):
-        config.save_saved(saved)
-
-    cid = os.environ.get("OSU_CLIENT_ID") or saved.get("client_id")
-    secret = os.environ.get("OSU_CLIENT_SECRET") or saved.get("client_secret")
-    if not (cid and secret):
-        runtime.console.print(
-            Panel(api.GUIDE, title="First time? Get API keys")
-        )
-        cid = cid or Prompt.ask("osu! client ID", console=runtime.console)
-        secret = secret or getpass.getpass("osu! client secret (hidden): ")
-        saved["client_id"], saved["client_secret"] = str(cid), secret
-        config.save_saved(saved)
-        runtime.console.print(
-            f"[green]Credentials saved to {config.CONFIG_PATH}[/] "
-            "(plain text, keep it private / out of git)"
-        )
-    else:
-        runtime.console.print("[dim]Using saved credentials.[/]")
-
-    cfg = None
-    if all(key in saved for key in SETTING_KEYS):
-        try:
-            cfg = config.cfg_from_raw(saved)
-            ui.show_summary(cfg)
-            accepted = Confirm.ask(
-                "Use these settings?",
-                default=True,
-                console=runtime.console,
-            )
-            if not accepted:
-                cfg = None
-        except (KeyError, ValueError, TypeError) as exc:
-            runtime.console.print(
-                f"[yellow]Saved settings need attention: {exc}[/]"
-            )
-            cfg = None
-
-    if cfg is None:
-        cfg, raw = ui.ask_config(saved)
-        saved.update(raw)
-        config.save_saved(saved)
-        ui.show_summary(cfg)
-        accepted = Confirm.ask(
-            "Use these settings?", default=True, console=runtime.console
-        )
-        if not accepted:
-            runtime.console.print("[yellow]Cancelled.[/]")
-            return
+async def run(
+    cfg: dict,
+    cid,
+    secret: str,
+    progress: TaskBoard | None = None,
+    overall: TaskBoard | None = None,
+) -> dict:
+    """Run one full search + download pass and return a summary dict."""
+    runtime.reset_run()
+    progress = progress or TaskBoard()
+    overall = overall or TaskBoard()
+    progress.reset()
+    overall.reset()
 
     cfg["out"].mkdir(parents=True, exist_ok=True)
     for leftover in cfg["out"].glob("*.part"):
         leftover.unlink(missing_ok=True)
+    # Older builds wrote a link report next to the maps; the GUI shows it now.
+    (cfg["out"] / FAILED_LINKS_NAME).unlink(missing_ok=True)
 
-    runtime.reset_run()
     status = state.Status(cfg["out"]).load()
 
     timeout = aiohttp.ClientTimeout(
@@ -175,7 +116,13 @@ async def main() -> None:
         enable_cleanup_closed=True,
     )
 
+    failed: dict[int, str] = {}
     elapsed = 0.0
+    sets: list = []
+    existing: set[int] = set()
+    todo: list = []
+
+    progress.set_message("Signing in to osu!...")
     async with aiohttp.ClientSession(
         timeout=timeout,
         headers={"User-Agent": API_UA},
@@ -186,35 +133,46 @@ async def main() -> None:
         existing = state.scan_existing(cfg["out"]) | status.ids
         status.prune_failed(existing)
         if status.failed:
-            runtime.console.print(
-                f"[dim]{len(status.failed)} set(s) failed last run; they'll be "
-                "retried.[/]"
+            runtime.log(
+                f"{len(status.failed)} set(s) failed last run; they'll be retried."
             )
 
-        with runtime.console.status("[cyan]Searching osu!...[/]") as spinner:
-            sets = await api.search_sets(session, token, cfg, spinner)
+        progress.set_message("Searching osu!...")
+        sets = await api.search_sets(session, token, cfg, StatusSink(progress))
 
         todo = [set_data for set_data in sets if set_data["id"] not in existing]
-        ui.show_search_summary(sets, todo, existing, cfg)
+        runtime.log(
+            f"Search finished: {len(sets)} matching, "
+            f"{len(sets) - len(todo)} already downloaded, {len(todo)} to fetch."
+        )
 
-        if not todo:
-            runtime.console.print("[green]Nothing new to download.[/]")
-        elif not Confirm.ask(
-            "Start downloading?", default=True, console=runtime.console
-        ):
-            runtime.console.print("[yellow]Cancelled.[/]")
+        if todo and not runtime.should_stop():
+            progress.set_message(f"Downloading {len(todo)} sets...")
+            failed, elapsed = await _run_downloads(
+                session, cfg, todo, status, progress, overall
+            )
+        elif not todo:
+            progress.set_message("Nothing new to download.")
+            runtime.log("[green]Nothing new to download.[/]")
         else:
-            _, elapsed = await _run_downloads(session, cfg, todo, status)
-            _print_done(cfg, elapsed)
-            if runtime.mirrors_exhausted:
-                runtime.console.print(
-                    Panel(
-                        "[yellow]Stopped early: the mirrors rate-limited this IP. "
-                        "Nothing was hammered. Re-run later; finished sets are "
-                        "already recorded.[/]",
-                        border_style="yellow",
-                        title="Paused safely",
-                    )
-                )
+            progress.set_message("Stopped.")
 
-    reports.print_failed_links(cfg["out"], status.failed, status.titles)
+    status.flush()
+    if elapsed:
+        progress.set_message(
+            f"Done: {runtime.stats['ok']} downloaded, "
+            f"{runtime.stats['fail']} failed in {elapsed:.1f}s."
+        )
+    return {
+        "matched": len(sets),
+        "existing": len(existing),
+        "todo": len(todo),
+        "failed": {
+            sid: status.titles.get(str(sid), "") for sid in status.failed
+        },
+        "new_failed": failed,
+        "titles": dict(status.titles),
+        "elapsed": elapsed,
+        "stopped": runtime.should_stop(),
+        "mirrors_exhausted": runtime.mirrors_exhausted,
+    }

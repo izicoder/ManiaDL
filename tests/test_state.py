@@ -38,6 +38,30 @@ class StatusMigrationTests(unittest.TestCase):
             self.assertEqual(status.ids, {33, 44})
             self.assertEqual(status.failed, [55])
             self.assertTrue((folder / "status.json").exists())
+            # The folder is kept to osz files + status.json only.
+            self.assertFalse((folder / "downloaded_ids.txt").exists())
+            self.assertFalse((folder / "failed.txt").exists())
+
+    def test_stale_legacy_files_are_removed_when_status_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "status.json").write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "downloaded": {"11": "old"},
+                        "failed": [],
+                        "titles": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (folder / "downloaded_ids.txt").write_text("33", encoding="utf-8")
+            (folder / "failed.txt").write_text("55", encoding="utf-8")
+            status = state.Status(folder).load()
+            self.assertEqual(status.ids, {11})
+            self.assertFalse((folder / "downloaded_ids.txt").exists())
+            self.assertFalse((folder / "failed.txt").exists())
 
     def test_invalid_json_is_rebuilt(self):
         with tempfile.TemporaryDirectory() as tmp:

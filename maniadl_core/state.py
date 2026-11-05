@@ -64,8 +64,8 @@ class Status:
         except OSError:
             data = None
         except ValueError:
-            runtime.console.print(
-                f"[yellow]![/] {STATUS_NAME} isn't valid JSON; rebuilding it."
+            runtime.log(
+                f"{STATUS_NAME} isn't valid JSON; rebuilding it."
             )
 
         if isinstance(data, dict):
@@ -105,6 +105,9 @@ class Status:
 
     def _migrate_legacy(self) -> None:
         if self.path.exists():
+            # status.json is authoritative; old text files are redundant.
+            for name in (LEGACY_IDS_NAME, LEGACY_FAILED_NAME):
+                (self.folder / name).unlink(missing_ok=True)
             return
         moved = []
 
@@ -132,11 +135,14 @@ class Status:
             pass
 
         if moved:
-            self.save()
-            runtime.console.print(
-                f"[dim]Imported {' and '.join(moved)} into {STATUS_NAME}; "
-                "you can delete the old text files.[/]"
-            )
+            if self.save():
+                # Keep the download folder to osz files + status.json only.
+                for name in moved:
+                    (self.folder / name).unlink(missing_ok=True)
+                runtime.log(
+                    f"Imported {' and '.join(moved)} into {STATUS_NAME} and "
+                    "removed the old text files."
+                )
 
     @property
     def ids(self) -> set[int]:
@@ -186,7 +192,7 @@ class Status:
     def flush(self) -> None:
         self.save()
 
-    def save(self) -> None:
+    def save(self) -> bool:
         self.updated = util.stamp()
         ordered = sorted(
             (key for key in self.downloaded if str(key).isdigit()), key=int
@@ -212,5 +218,7 @@ class Status:
             )
             self._dirty = 0
             self._last_save = time.monotonic()
+            return True
         except OSError as exc:
-            runtime.log(f"[yellow]![/] couldn't write {STATUS_NAME}: {exc}")
+            runtime.log(f"Couldn't write {STATUS_NAME}: {exc}")
+            return False

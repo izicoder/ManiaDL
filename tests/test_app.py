@@ -1,45 +1,20 @@
 """End-to-end orchestration test with a fake HTTP session (no network)."""
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from maniadl_core import app, mirrors, runtime
+from maniadl_core import app, config, mirrors, runtime
 from maniadl_core.constants import MIRRORS
+from maniadl_core.progress import TaskBoard
 from tests.fakes import FakeResponse, FakeSession, make_osz_bytes
 
 
-class DummyLive:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def start(self, refresh=False):
-        pass
-
-    def stop(self):
-        pass
-
-    def update(self, renderable, refresh=False):
-        pass
-
-    def refresh(self):
-        pass
-
-
-def legacy_saved(folder: Path) -> dict:
+def raw_config(folder: Path) -> dict:
     """Only the old config keys, to prove migration still works."""
     return {
-        "client_id": "1234",
-        "client_secret": "secret",
         "out": str(folder),
         "statuses": "ranked",
         "keys": "4",
@@ -87,6 +62,19 @@ def make_set(sid=123, title="Test Set"):
 
 
 class MainFlowTests(unittest.IsolatedAsyncioTestCase):
+    async def _run(self, folder: Path, session: FakeSession) -> dict:
+        cfg = config.cfg_from_raw(raw_config(folder))
+        with patch.object(app, "batch_pause", return_value=0), patch.object(app, "MIN_FREE_GB", 0.0), patch.object(
+            mirrors, "MIN_FREE_GB", 0.0
+        ), patch.object(
+            app.aiohttp, "ClientSession", return_value=session
+        ), patch.object(
+            app.aiohttp, "TCPConnector", return_value=object()
+        ):
+            return await app.run(
+                cfg, "1234", "secret", TaskBoard(), TaskBoard()
+            )
+
     async def test_full_run_downloads_and_records_status(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
@@ -105,24 +93,7 @@ class MainFlowTests(unittest.IsolatedAsyncioTestCase):
                     FakeResponse(json_data={"access_token": "token"})
                 ],
             )
-            with patch.object(app.config, "load_saved", return_value=legacy_saved(folder)), patch.object(
-                app.config, "save_saved"
-            ), patch.object(app.Confirm, "ask", return_value=True), patch.object(
-                app, "batch_pause", return_value=0
-            ), patch.object(
-                app, "MIN_FREE_GB", 0.0
-            ), patch.object(
-                mirrors, "MIN_FREE_GB", 0.0
-            ), patch(
-                "rich.live.Live", DummyLive
-            ), patch.object(
-                app.aiohttp, "ClientSession", return_value=session
-            ), patch.object(
-                app.aiohttp, "TCPConnector", return_value=object()
-            ), patch.dict(
-                os.environ, {"OSU_CLIENT_ID": "", "OSU_CLIENT_SECRET": ""}
-            ):
-                await app.main()
+            result = await self._run(folder, session)
 
             self.assertTrue((folder / "123.osz").exists())
             payload = json.loads((folder / "status.json").read_text("utf-8"))
@@ -131,14 +102,19 @@ class MainFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((folder / "failed_links.txt").exists())
             self.assertEqual(runtime.stats["ok"], 1)
             self.assertEqual(runtime.stats["fail"], 0)
+            self.assertEqual(result["matched"], 1)
+            self.assertEqual(result["todo"], 1)
+            self.assertEqual(result["failed"], {})
 
             urls = [call[0] for call in session.get_calls]
             self.assertIn(
                 "https://osu.ppy.sh/api/v2/beatmapsets/search", urls
             )
-            self.assertEqual(session.post_calls[0][0], "https://osu.ppy.sh/oauth/token")
+            self.assertEqual(
+                session.post_calls[0][0], "https://osu.ppy.sh/oauth/token"
+            )
 
-    async def test_all_mirrors_failing_writes_link_report(self):
+    async def test_all_mirrors_failing_keeps_links_in_memory(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             session = FakeSession(
@@ -155,34 +131,70 @@ class MainFlowTests(unittest.IsolatedAsyncioTestCase):
                     FakeResponse(json_data={"access_token": "token"})
                 ],
             )
-            with patch.object(app.config, "load_saved", return_value=legacy_saved(folder)), patch.object(
-                app.config, "save_saved"
-            ), patch.object(app.Confirm, "ask", return_value=True), patch.object(
-                app, "batch_pause", return_value=0
-            ), patch.object(
-                app, "MIN_FREE_GB", 0.0
-            ), patch.object(
-                mirrors, "MIN_FREE_GB", 0.0
-            ), patch(
-                "rich.live.Live", DummyLive
-            ), patch.object(
-                app.aiohttp, "ClientSession", return_value=session
-            ), patch.object(
-                app.aiohttp, "TCPConnector", return_value=object()
-            ), patch.dict(
-                os.environ, {"OSU_CLIENT_ID": "", "OSU_CLIENT_SECRET": ""}
-            ), patch(
+            with patch(
                 "maniadl_core.mirrors.asyncio.sleep", new=AsyncMock()
             ):
-                await app.main()
+                result = await self._run(folder, session)
 
             self.assertFalse((folder / "456.osz").exists())
             payload = json.loads((folder / "status.json").read_text("utf-8"))
             self.assertEqual(payload["failed"], [456])
             self.assertEqual(payload["titles"], {"456": "Broken"})
-            report = (folder / "failed_links.txt").read_text("utf-8")
-            self.assertIn("https://osu.ppy.sh/beatmapsets/456", report)
+            self.assertFalse((folder / "failed_links.txt").exists())
+            self.assertEqual(result["failed"], {456: "Broken"})
             self.assertEqual(runtime.stats["fail"], 1)
+
+    async def test_stale_link_report_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "failed_links.txt").write_text("old", encoding="utf-8")
+            session = FakeSession(
+                get_responses=[
+                    FakeResponse(
+                        json_data={
+                            "beatmapsets": [make_set()],
+                            "cursor_string": None,
+                        }
+                    ),
+                    FakeResponse(
+                        chunks=[make_osz_bytes()],
+                        content_length=len(make_osz_bytes()),
+                    ),
+                ],
+                post_responses=[
+                    FakeResponse(json_data={"access_token": "token"})
+                ],
+            )
+            await self._run(folder, session)
+            self.assertFalse((folder / "failed_links.txt").exists())
+
+    async def test_log_listener_receives_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            data = make_osz_bytes()
+            session = FakeSession(
+                get_responses=[
+                    FakeResponse(
+                        json_data={
+                            "beatmapsets": [make_set()],
+                            "cursor_string": None,
+                        }
+                    ),
+                    FakeResponse(chunks=[data], content_length=len(data)),
+                ],
+                post_responses=[
+                    FakeResponse(json_data={"access_token": "token"})
+                ],
+            )
+            lines = []
+            runtime.set_log_listener(lines.append)
+            try:
+                await self._run(folder, session)
+            finally:
+                runtime.set_log_listener(None)
+            joined = "\n".join(lines)
+            self.assertIn("Search finished", joined)
+            self.assertIn("123 via", joined)
 
 
 if __name__ == "__main__":

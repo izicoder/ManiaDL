@@ -96,6 +96,25 @@ class FetchTests(unittest.IsolatedAsyncioTestCase):
                     tid,
                 )
 
+    async def test_stop_aborts_transfer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            part = Path(tmp) / "1.part"
+            session = FakeSession([FakeResponse(chunks=[b"hello"])])
+            progress = FakeProgress()
+            tid = progress.add_task("test")
+            runtime.request_stop()
+            try:
+                with self.assertRaises(mirrors.Stopped):
+                    await mirrors.fetch(
+                        session,
+                        "https://catboy.best/d/1",
+                        part,
+                        progress,
+                        tid,
+                    )
+            finally:
+                runtime.reset_run()
+
     async def test_bad_content_range_restarts(self):
         with tempfile.TemporaryDirectory() as tmp:
             part = Path(tmp) / "1.part"

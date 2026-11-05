@@ -37,6 +37,7 @@ HOST_MAX_CONCURRENCY = HOST_CONCURRENCY
 
 _listener = None
 _listener_lock = threading.Lock()
+_stop = threading.Event()
 
 # Rich-style tags still appear in a few log messages; strip them for the GUI.
 _MARKUP = re.compile(
@@ -86,4 +87,14 @@ def reset_run() -> None:
     host_state.clear()
     log_lines.clear()
     mirrors_exhausted = False
+    _stop.clear()
     util.reset_disk_cache()
+
+
+def request_stop() -> None:
+    """Ask the running job to stop after the current files/batch."""
+    _stop.set()
+
+
+def should_stop() -> bool:
+    return _stop.is_set()

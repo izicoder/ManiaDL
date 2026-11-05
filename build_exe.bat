@@ -1,1 +1,1 @@
-uv run --extra build pyinstaller --onefile --console --name ManiaDL maniadl.py
+uv run --extra build pyinstaller --onefile --windowed --name ManiaDL maniadl.py

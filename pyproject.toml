@@ -5,7 +5,6 @@ description = "Bulk osu!mania beatmap downloader for osu!lazer"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.9",
-    "rich>=13.0",
 ]
 
 [project.optional-dependencies]
