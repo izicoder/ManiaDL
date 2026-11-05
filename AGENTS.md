@@ -26,8 +26,8 @@ and more; keeps per-folder download state.
   avoidance.
 - Out of scope: importing into lazer, writing into the osu! `Songs/` folder,
   extra report files. The old `dl.old.py` (if present in history) is not used.
-- Maturity: personal tool, no CI/release config. The package docstrings and this
-  file are the documentation; there is no README.
+- Maturity: personal tool. The package docstrings, `README.md` and this file are
+  the documentation.
 
 ## Architecture
 
@@ -123,8 +123,8 @@ Main flow:
 | Test | `uv run python -m unittest discover -s tests -t . -v` | offline fakes in `tests/fakes.py` |
 | Lint/format | absent | no ruff/mypy/black config |
 | Build | `uv run --extra build pyinstaller --onefile --windowed --name ManiaDL maniadl.py` | `ManiaDL.spec` kept in sync manually (`console=False`) |
-| CI | absent | no `.github/`, `.gitlab-ci.yml` |
-| Release | absent | no tags, no remote configured |
+| CI | `.github/workflows/build.yml` | tests + windowed exe; release on `v*` tags |
+| Release | tag `v2.0.0` (or manual workflow) | publishes `ManiaDL.exe` on GitHub |
 | Data | `status.json` in the chosen output folder | `.osz` files only besides that |
 | Env | `.gitignore` lines ~237–247 | config, status, `*.part`, `*.osz` ignored |
 | Hooks | absent | no husky/pre-commit |
@@ -181,6 +181,7 @@ Main flow:
 
 ## Open questions
 
-- Whether the PyInstaller exe is actually built or distributed anywhere — no
-  spec changes are automated, no CI, no artifacts in the repo.
+- Whether the PyInstaller exe is distributed outside GitHub releases — CI now
+  builds it on tags, but nothing verifies the executable beyond PyInstaller's
+  own success.
 - Community mirrors change or die often; `MIRRORS` needs manual maintenance.
