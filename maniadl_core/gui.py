@@ -563,6 +563,7 @@ class ManiaDLApp(tk.Tk):
         self._filter_section(inner)
         self._download_section(inner)
         self._advanced_section(inner)
+        self._wheel_safe(inner)
 
     def _api_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="osu! API", padding=(10, 8))
@@ -961,13 +962,32 @@ class ManiaDLApp(tk.Tk):
         except Exception:
             pass
 
+    def _wheel_safe(self, widget) -> None:
+        """Keep the wheel scrolling the panel instead of editing values.
+
+        ttk comboboxes and spinboxes edit their value on the wheel by default,
+        which is easy to trigger by accident while scrolling the settings list.
+        The widget-level binding runs before those class bindings, so breaking
+        the event there disables the value change.
+        """
+        if isinstance(widget, (ttk.Combobox, ttk.Spinbox, ttk.Scale)):
+            widget.bind("<MouseWheel>", self._scroll_panel)
+        for child in widget.winfo_children():
+            self._wheel_safe(child)
+
+    def _scroll_panel(self, event) -> str:
+        """Scroll the settings list one notch (or more for fast wheels)."""
+        delta = int(event.delta)
+        if delta:
+            steps = (1 if delta < 0 else -1) * max(1, abs(delta) // 120)
+            self.left_canvas.yview_scroll(steps, "units")
+        return "break"
+
     def _on_wheel(self, event) -> None:
         widget = self.winfo_containing(event.x_root, event.y_root)
         while widget is not None:
             if widget is self.left_canvas or widget is self.left_inner:
-                self.left_canvas.yview_scroll(
-                    int(-event.delta / 120), "units"
-                )
+                self._scroll_panel(event)
                 return
             widget = getattr(widget, "master", None)
 

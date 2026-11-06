@@ -171,6 +171,10 @@ Main flow:
   that were not started stay queued for the next run.
 - Tk widgets may only be touched from the Tk thread. Worker code calls
   `runtime.log()`, `TaskBoard` methods and queues; never `widget.configure()`.
+- The settings panel scrolls via `<MouseWheel>`; `_wheel_safe()` adds a
+  widget-level wheel binding to every combobox/spinbox/scale inside it that
+  scrolls the panel and returns `"break"`. Without it the wheel silently edits
+  those settings when the pointer crosses them.
 - `--onefile` exes unpack to a temp dir; `HERE` already handles this — do not
   switch config/output paths to `__file__` unguarded.
 - Download leftovers (`*.part`) are cleaned on startup and after each run. They
