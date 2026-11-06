@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .constants import MAX_BPM, MAX_LENGTH, MAX_NOTES
+from .constants import MAX_BPM, MAX_LENGTH, MAX_NOTES, SORT_LABELS
 
 
 def range_label(low, high, low_default, high_default, unit: str = "") -> str:
@@ -38,7 +38,7 @@ def summary_rows(cfg: dict) -> list[tuple[str, str]]:
         ("Keys", keys_label(cfg)),
         ("Star rating", f"{cfg['min_sr']:g} - {cfg['max_sr']:g}"),
         ("Min favourites", str(cfg["min_favs"])),
-        ("Sort", cfg["sort"]),
+        ("Sort", SORT_LABELS.get(cfg["sort"], cfg["sort"])),
         ("Max sets", str(cfg["limit"])),
         ("Parallel / batch", f"{cfg['workers']} / {cfg['batch']}"),
     ]

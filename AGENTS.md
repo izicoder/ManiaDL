@@ -35,8 +35,8 @@ and more; keeps per-folder download state.
 lives in `maniadl_core/`:
 
 - `gui.py` — tkinter window: scrollable left settings panel, right status
-  panel (overall bar, stats, active transfers, mirror health, log, failed
-  sets), Start/Stop, worker thread and the 120 ms polling loop.
+  panel (overall bar, stats, active transfers, log, failed sets), Start/Stop,
+  worker thread and the 120 ms polling loop.
 - `app.py` — `run()` orchestration: auth -> search -> downloads -> summary.
   Also owns batch pacing. No prompts or printing.
 - `progress.py` — thread-safe `TaskBoard` (rich-Progress-compatible subset used

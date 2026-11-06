@@ -18,7 +18,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import api, app, config, reports, runtime, ui, util
-from .constants import ADVANCED_KEYS, DEFAULT_OUT, NEW_DEFAULTS, SORTS
+from .constants import ADVANCED_KEYS, DEFAULT_OUT, NEW_DEFAULTS, SORT_LABELS, SORTS
 from .progress import TaskBoard
 
 BG = "#111318"
@@ -66,6 +66,7 @@ ADVANCED_HINTS = {
     "genre": "comma-separated, partial ok",
     "language": "comma-separated, partial ok",
 }
+SORT_BY_LABEL = {label: key for key, label in SORT_LABELS.items()}
 
 
 class ManiaDLApp(tk.Tk):
@@ -127,6 +128,7 @@ class ManiaDLApp(tk.Tk):
             self.stat_vars["free"].set(self._free_text)
         except OSError:
             self._free_text = "?"
+            self.stat_vars["free"].set("?")
 
         statuses = [
             part.strip().lower()
@@ -148,7 +150,10 @@ class ManiaDLApp(tk.Tk):
         self.max_sr_var.set(str(saved.get("max_sr", 99)))
         self.min_favs_var.set(str(saved.get("min_favs", 0)))
         self.sort_var.set(
-            str(saved.get("sort") if saved.get("sort") in SORTS else SORTS[0])
+            SORT_LABELS.get(
+                saved.get("sort") if saved.get("sort") in SORTS else SORTS[0],
+                SORT_LABELS[SORTS[0]],
+            )
         )
         self.limit_var.set(str(saved.get("limit", 500)))
         self.workers_var.set(str(saved.get("workers", 4)))
@@ -193,7 +198,7 @@ class ManiaDLApp(tk.Tk):
             "min_sr": self.min_sr_var.get().strip() or "0",
             "max_sr": self.max_sr_var.get().strip() or "99",
             "min_favs": self.min_favs_var.get().strip() or "0",
-            "sort": self.sort_var.get(),
+            "sort": SORT_BY_LABEL.get(self.sort_var.get(), SORTS[0]),
             "limit": self.limit_var.get().strip() or "500",
             "workers": self.workers_var.get().strip() or "4",
             "batch": self.batch_var.get().strip() or "20",
@@ -249,15 +254,6 @@ class ManiaDLApp(tk.Tk):
         )
         style.configure(
             "Subtitle.TLabel", background=BG, foreground=MUTED, font=small
-        )
-        style.configure(
-            "Header.TLabel",
-            background=BG,
-            foreground=FG,
-            font=("Segoe UI Semibold", 12),
-        )
-        style.configure(
-            "Section.TLabel", background=BG, foreground=ACCENT, font=bold
         )
 
         # ---- cards -----------------------------------------------------
@@ -332,8 +328,8 @@ class ManiaDLApp(tk.Tk):
         style.configure(
             "TLabelframe.Label",
             background=BG,
-            foreground=ACCENT,
-            font=bold,
+            foreground=MUTED,
+            font=tiny_bold,
         )
         style.configure("TSeparator", background=BORDER)
 
@@ -385,7 +381,10 @@ class ManiaDLApp(tk.Tk):
             "TCheckbutton",
             background=[("active", BG)],
             foreground=[("disabled", MUTED)],
-            indicatorcolor=[("selected", ACCENT), ("!selected", FIELD)],
+            indicatorbackground=[("selected", ACCENT), ("!selected", FIELD)],
+            indicatorforeground=[("selected", "#0d1117"), ("!selected", MUTED)],
+            upperbordercolor=[("!selected", BORDER)],
+            lowerbordercolor=[("!selected", BORDER)],
         )
 
         # ---- data views ------------------------------------------------
@@ -423,9 +422,9 @@ class ManiaDLApp(tk.Tk):
             "TNotebook.Tab",
             background=PANEL,
             foreground=MUTED,
-            padding=(18, 8),
+            padding=(14, 6),
             borderwidth=0,
-            font=bold,
+            font=tiny_bold,
         )
         style.map(
             "TNotebook.Tab",
@@ -434,9 +433,9 @@ class ManiaDLApp(tk.Tk):
         )
         style.configure(
             "TProgressbar",
-            troughcolor=FIELD,
+            troughcolor=PANEL_ALT,
             background=ACCENT,
-            bordercolor=FIELD,
+            bordercolor=PANEL_ALT,
             lightcolor=ACCENT,
             darkcolor=ACCENT,
             thickness=16,
@@ -549,7 +548,7 @@ class ManiaDLApp(tk.Tk):
         self.min_sr_var = tk.StringVar()
         self.max_sr_var = tk.StringVar()
         self.min_favs_var = tk.StringVar()
-        self.sort_var = tk.StringVar(value=SORTS[0])
+        self.sort_var = tk.StringVar(value=SORT_LABELS[SORTS[0]])
         self.limit_var = tk.StringVar()
         self.workers_var = tk.StringVar()
         self.batch_var = tk.StringVar()
@@ -568,6 +567,7 @@ class ManiaDLApp(tk.Tk):
     def _api_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="osu! API", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         self._labeled(box, 0, "Client ID", ttk.Entry(box, textvariable=self.cid_var))
@@ -595,29 +595,22 @@ class ManiaDLApp(tk.Tk):
     def _folder_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Download folder", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
-        box.columnconfigure(1, weight=1)
+        box.columnconfigure(0, weight=1)
 
-        ttk.Label(box, text="Folder").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=3
-        )
         ttk.Entry(box, textvariable=self.out_var).grid(
-            row=0, column=1, sticky="ew", pady=3
+            row=0, column=0, sticky="ew", pady=3
         )
         ttk.Button(box, text="Browse", command=self._browse).grid(
-            row=0, column=2, padx=(6, 0), pady=3
+            row=0, column=1, padx=(6, 0), pady=3
         )
         ttk.Button(box, text="Open", command=self._open_folder).grid(
-            row=0, column=3, padx=(6, 0), pady=3
+            row=0, column=2, padx=(6, 0), pady=3
         )
-        ttk.Label(
-            box,
-            text="Only .osz files and status.json are written here.",
-            style="Muted.TLabel",
-        ).grid(row=1, column=1, columnspan=3, sticky="w", pady=(4, 0))
 
     def _filter_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Filters", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         ttk.Label(box, text="Statuses").grid(
@@ -646,7 +639,7 @@ class ManiaDLApp(tk.Tk):
             ttk.Entry(box, textvariable=self.keys_var),
         )
         ttk.Label(
-            box, text="all, or comma-separated (4,7)", style="Muted.TLabel"
+            box, text="all or 4,7", style="Muted.TLabel"
         ).grid(row=2, column=1, sticky="w", pady=(0, 3))
 
         stars = ttk.Frame(box)
@@ -673,7 +666,7 @@ class ManiaDLApp(tk.Tk):
         sort = ttk.Combobox(
             box,
             textvariable=self.sort_var,
-            values=SORTS,
+            values=[SORT_LABELS[key] for key in SORTS],
             state="readonly",
         )
         self._labeled(box, 5, "Sort by", sort)
@@ -690,6 +683,7 @@ class ManiaDLApp(tk.Tk):
     def _download_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Download behaviour", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         self._labeled(
@@ -708,16 +702,11 @@ class ManiaDLApp(tk.Tk):
                 box, textvariable=self.batch_var, from_=1, to=500, width=10
             ),
         )
-        ttk.Label(
-            box,
-            text="Mirrors are paced automatically; 429s pause the host.",
-            style="Muted.TLabel",
-            wraplength=320,
-        ).grid(row=2, column=1, sticky="w", pady=(4, 0))
 
     def _advanced_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Advanced filters", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         head = ttk.Frame(box)
@@ -737,6 +726,7 @@ class ManiaDLApp(tk.Tk):
         self.adv_frame.grid(
             row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
+        self.adv_frame.columnconfigure(0, minsize=112)
         self.adv_frame.columnconfigure(1, weight=1)
         self.adv_inputs: list[tk.Widget] = []
 
@@ -864,7 +854,7 @@ class ManiaDLApp(tk.Tk):
             transfers,
             columns=("set", "pct"),
             show="headings",
-            height=4,
+            height=3,
             selectmode="none",
         )
         self.transfers.heading("set", text="Set")
@@ -1289,7 +1279,10 @@ class ManiaDLApp(tk.Tk):
         self.stat_vars["mb"].set(f"{megabytes:,.1f} MB")
         self.stat_vars["rate"].set(f"{megabytes / elapsed:,.2f} MB/s")
         if now - self._free_at >= 2.0 and self.cfg:
-            self._free_text = f"{util.free_gb(self.cfg['out']):,.1f} GB"
+            try:
+                self._free_text = f"{util.free_gb(self.cfg['out']):,.1f} GB"
+            except OSError:
+                self._free_text = "?"
             self._free_at = now
         self.stat_vars["free"].set(self._free_text)
 
