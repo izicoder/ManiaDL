@@ -28,6 +28,8 @@ rate-limit handling and resume support.
 
 ## Run
 
+Double-click `launch.bat`, or run:
+
 ```powershell
 uv sync
 uv run maniadl.py
@@ -42,6 +44,8 @@ plain text. Keep that file private and out of git. `OSU_CLIENT_ID` /
 `OSU_CLIENT_SECRET` environment variables override saved values.
 
 ## Build
+
+Double-click `build_exe.bat`, or run:
 
 ```powershell
 uv sync --extra build

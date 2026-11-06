@@ -1,7 +1,7 @@
 """Dark tkinter desktop UI for ManiaDL.
 
 Layout follows the spec: every setting lives in the scrollable left panel, all
-run status (progress, stats, mirrors, log, failed sets) lives on the right.
+run status (progress, stats, transfers, log, failed sets) lives on the right.
 Downloads run in a worker thread; widgets are only touched from the Tk thread.
 """
 
@@ -18,25 +18,20 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import api, app, config, reports, runtime, ui, util
-from .constants import (
-    ADVANCED_KEYS,
-    DEFAULT_OUT,
-    MIRRORS,
-    NEW_DEFAULTS,
-    SORTS,
-)
+from .constants import ADVANCED_KEYS, DEFAULT_OUT, NEW_DEFAULTS, SORT_LABELS, SORTS
 from .progress import TaskBoard
 
-BG = "#14161b"
-PANEL = "#1c1f26"
-PANEL_ALT = "#232833"
-FG = "#d8dee9"
-MUTED = "#8b93a3"
-ACCENT = "#6cb6ff"
-GREEN = "#5dd39e"
-RED = "#ff6b81"
-YELLOW = "#ffd166"
-BORDER = "#2c313c"
+BG = "#111318"
+PANEL = "#191c23"
+PANEL_ALT = "#232834"
+FG = "#e5e9f0"
+MUTED = "#8f98a8"
+ACCENT = "#7aa2f7"
+GREEN = "#9ece6a"
+RED = "#f7768e"
+YELLOW = "#e0af68"
+BORDER = "#2b303b"
+FIELD = "#1e222b"
 
 STATUS_ORDER = ["ranked", "loved", "qualified", "pending", "graveyard"]
 STATUS_LABELS = {
@@ -71,6 +66,7 @@ ADVANCED_HINTS = {
     "genre": "comma-separated, partial ok",
     "language": "comma-separated, partial ok",
 }
+SORT_BY_LABEL = {label: key for key, label in SORT_LABELS.items()}
 
 
 class ManiaDLApp(tk.Tk):
@@ -132,6 +128,7 @@ class ManiaDLApp(tk.Tk):
             self.stat_vars["free"].set(self._free_text)
         except OSError:
             self._free_text = "?"
+            self.stat_vars["free"].set("?")
 
         statuses = [
             part.strip().lower()
@@ -153,7 +150,10 @@ class ManiaDLApp(tk.Tk):
         self.max_sr_var.set(str(saved.get("max_sr", 99)))
         self.min_favs_var.set(str(saved.get("min_favs", 0)))
         self.sort_var.set(
-            str(saved.get("sort") if saved.get("sort") in SORTS else SORTS[0])
+            SORT_LABELS.get(
+                saved.get("sort") if saved.get("sort") in SORTS else SORTS[0],
+                SORT_LABELS[SORTS[0]],
+            )
         )
         self.limit_var.set(str(saved.get("limit", 500)))
         self.workers_var.set(str(saved.get("workers", 4)))
@@ -198,7 +198,7 @@ class ManiaDLApp(tk.Tk):
             "min_sr": self.min_sr_var.get().strip() or "0",
             "max_sr": self.max_sr_var.get().strip() or "99",
             "min_favs": self.min_favs_var.get().strip() or "0",
-            "sort": self.sort_var.get(),
+            "sort": SORT_BY_LABEL.get(self.sort_var.get(), SORTS[0]),
             "limit": self.limit_var.get().strip() or "500",
             "workers": self.workers_var.get().strip() or "4",
             "batch": self.batch_var.get().strip() or "20",
@@ -221,152 +221,202 @@ class ManiaDLApp(tk.Tk):
         except tk.TclError:
             pass
 
-        base = ("Segoe UI", 9)
-        header = ("Segoe UI Semibold", 13)
-        title = ("Segoe UI Semibold", 18)
-        small_bold = ("Segoe UI Semibold", 9)
+        base = ("Segoe UI", 10)
+        bold = ("Segoe UI Semibold", 10)
+        small = ("Segoe UI", 9)
+        tiny_bold = ("Segoe UI Semibold", 9)
+        value = ("Segoe UI Semibold", 17)
         self.option_add("*Font", base)
 
         style.configure(
             ".",
             background=BG,
             foreground=FG,
-            fieldbackground=PANEL_ALT,
+            fieldbackground=FIELD,
             bordercolor=BORDER,
             lightcolor=BORDER,
             darkcolor=BORDER,
             troughcolor=PANEL,
             focuscolor=ACCENT,
             selectbackground=ACCENT,
-            selectforeground="#0b1220",
+            selectforeground="#10131a",
             font=base,
         )
-        style.configure("TFrame", background=BG)
-        style.configure("TLabel", background=BG, foreground=FG)
-        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
-        style.configure("Header.TLabel", background=BG, foreground=FG, font=header)
-        style.configure("Title.TLabel", background=BG, foreground=ACCENT, font=title)
-        style.configure("Ok.TLabel", background=BG, foreground=GREEN, font=small_bold)
-        style.configure("Fail.TLabel", background=BG, foreground=RED, font=small_bold)
-        style.configure("Info.TLabel", background=BG, foreground=ACCENT, font=small_bold)
-        style.configure("Warn.TLabel", background=BG, foreground=YELLOW, font=small_bold)
 
+        # ---- text ------------------------------------------------------
+        style.configure("TLabel", background=BG, foreground=FG)
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=small)
+        style.configure(
+            "Title.TLabel",
+            background=BG,
+            foreground=FG,
+            font=("Segoe UI Semibold", 21),
+        )
+        style.configure(
+            "Subtitle.TLabel", background=BG, foreground=MUTED, font=small
+        )
+
+        # ---- cards -----------------------------------------------------
+        style.configure("Card.TFrame", background=PANEL)
+        style.configure(
+            "CardTitle.TLabel", background=PANEL, foreground=MUTED, font=small
+        )
+        style.configure(
+            "CardValue.TLabel", background=PANEL, foreground=FG, font=value
+        )
+        style.configure(
+            "CardValueGreen.TLabel", background=PANEL, foreground=GREEN, font=value
+        )
+        style.configure(
+            "CardValueRed.TLabel", background=PANEL, foreground=RED, font=value
+        )
+        style.configure(
+            "CardValueAccent.TLabel", background=PANEL, foreground=ACCENT, font=value
+        )
+        style.configure(
+            "CardMeta.TLabel", background=PANEL, foreground=MUTED, font=small
+        )
+
+        # ---- buttons ---------------------------------------------------
         style.configure(
             "TButton",
             background=PANEL_ALT,
             foreground=FG,
             borderwidth=0,
-            padding=(10, 5),
+            padding=(12, 6),
             focusthickness=0,
+            font=bold,
         )
         style.map(
             "TButton",
-            background=[("active", BORDER), ("disabled", PANEL)],
+            background=[("active", BORDER), ("pressed", BORDER), ("disabled", PANEL)],
             foreground=[("disabled", MUTED)],
         )
         style.configure(
             "Accent.TButton",
             background=ACCENT,
-            foreground="#0b1220",
-            font=small_bold,
+            foreground="#0d1117",
+            font=("Segoe UI Semibold", 10),
+            padding=(26, 8),
         )
         style.map(
             "Accent.TButton",
-            background=[("active", "#8ccaff"), ("disabled", "#3a4a5f")],
+            background=[("active", "#9bb8fa"), ("pressed", "#9bb8fa"), ("disabled", "#374151")],
             foreground=[("disabled", MUTED)],
         )
-        style.configure("Stop.TButton", background=PANEL_ALT, foreground=RED)
+        style.configure(
+            "Stop.TButton",
+            background=PANEL_ALT,
+            foreground=RED,
+            font=("Segoe UI Semibold", 10),
+            padding=(20, 8),
+        )
         style.map(
             "Stop.TButton",
-            background=[("active", BORDER), ("disabled", PANEL)],
+            background=[("active", BORDER), ("pressed", BORDER), ("disabled", PANEL)],
             foreground=[("disabled", MUTED)],
         )
 
+        # ---- containers ------------------------------------------------
         style.configure(
             "TLabelframe",
             background=BG,
             bordercolor=BORDER,
+            borderwidth=1,
             relief="solid",
         )
         style.configure(
             "TLabelframe.Label",
             background=BG,
-            foreground=ACCENT,
-            font=small_bold,
+            foreground=MUTED,
+            font=tiny_bold,
         )
+        style.configure("TSeparator", background=BORDER)
+
+        # ---- inputs ----------------------------------------------------
         style.configure(
             "TEntry",
-            fieldbackground=PANEL_ALT,
+            fieldbackground=FIELD,
             foreground=FG,
             insertcolor=FG,
             bordercolor=BORDER,
-            padding=4,
+            padding=7,
         )
-        style.map("TEntry", fieldbackground=[("disabled", PANEL)])
+        style.map(
+            "TEntry",
+            fieldbackground=[("disabled", PANEL), ("focus", FIELD)],
+            bordercolor=[("focus", ACCENT)],
+        )
         style.configure(
             "TCombobox",
-            fieldbackground=PANEL_ALT,
-            background=PANEL_ALT,
+            fieldbackground=FIELD,
+            background=FIELD,
             foreground=FG,
-            arrowcolor=FG,
+            arrowcolor=MUTED,
             bordercolor=BORDER,
-            padding=4,
+            padding=7,
         )
         style.map(
             "TCombobox",
-            fieldbackground=[("readonly", PANEL_ALT), ("disabled", PANEL)],
+            fieldbackground=[("readonly", FIELD), ("disabled", PANEL)],
             foreground=[("readonly", FG)],
-            selectbackground=[("readonly", PANEL_ALT)],
+            selectbackground=[("readonly", FIELD)],
             selectforeground=[("readonly", FG)],
         )
         style.configure(
             "TSpinbox",
-            fieldbackground=PANEL_ALT,
+            fieldbackground=FIELD,
             foreground=FG,
-            arrowcolor=FG,
+            arrowcolor=MUTED,
             bordercolor=BORDER,
-            padding=4,
+            padding=7,
         )
         style.map(
             "TSpinbox",
             fieldbackground=[("disabled", PANEL)],
             foreground=[("disabled", MUTED)],
         )
-        style.configure("TCheckbutton", background=BG, foreground=FG)
+        style.configure("TCheckbutton", background=BG, foreground=FG, font=small)
         style.map(
             "TCheckbutton",
             background=[("active", BG)],
             foreground=[("disabled", MUTED)],
+            indicatorbackground=[("selected", ACCENT), ("!selected", FIELD)],
+            indicatorforeground=[("selected", "#0d1117"), ("!selected", MUTED)],
+            upperbordercolor=[("!selected", BORDER)],
+            lowerbordercolor=[("!selected", BORDER)],
         )
 
+        # ---- data views ------------------------------------------------
         style.configure(
             "Treeview",
             background=PANEL,
             fieldbackground=PANEL,
             foreground=FG,
             bordercolor=BORDER,
-            rowheight=22,
+            rowheight=27,
             font=base,
         )
         style.configure(
             "Treeview.Heading",
-            background=PANEL_ALT,
+            background=PANEL,
             foreground=MUTED,
             relief="flat",
-            font=("Segoe UI Semibold", 8),
+            font=tiny_bold,
+            padding=(6, 6),
         )
         style.map(
             "Treeview",
-            background=[("selected", "#2d4a68")],
+            background=[("selected", "#2f4368")],
             foreground=[("selected", FG)],
         )
-        style.map("Treeview.Heading", background=[("active", BORDER)])
+        style.map("Treeview.Heading", background=[("active", PANEL_ALT)])
 
         style.configure(
             "TNotebook",
             background=BG,
             bordercolor=BORDER,
-            tabmargins=(0, 4, 0, 0),
+            tabmargins=(0, 6, 0, 0),
         )
         style.configure(
             "TNotebook.Tab",
@@ -374,6 +424,7 @@ class ManiaDLApp(tk.Tk):
             foreground=MUTED,
             padding=(14, 6),
             borderwidth=0,
+            font=tiny_bold,
         )
         style.map(
             "TNotebook.Tab",
@@ -384,10 +435,10 @@ class ManiaDLApp(tk.Tk):
             "TProgressbar",
             troughcolor=PANEL_ALT,
             background=ACCENT,
-            bordercolor=BG,
+            bordercolor=PANEL_ALT,
             lightcolor=ACCENT,
             darkcolor=ACCENT,
-            thickness=14,
+            thickness=16,
         )
         style.configure(
             "TScrollbar",
@@ -395,13 +446,14 @@ class ManiaDLApp(tk.Tk):
             troughcolor=BG,
             bordercolor=BG,
             arrowcolor=MUTED,
+            width=10,
         )
         style.map("TScrollbar", background=[("active", BORDER)])
 
     # ---- layout ---------------------------------------------------------
 
     def _build(self) -> None:
-        main = ttk.Frame(self, padding=12)
+        main = ttk.Frame(self, padding=(16, 14))
         main.pack(fill="both", expand=True)
 
         head = ttk.Frame(main)
@@ -410,15 +462,23 @@ class ManiaDLApp(tk.Tk):
         ttk.Label(
             head,
             text="bulk osu!mania beatmap downloader for osu!lazer",
-            style="Muted.TLabel",
-        ).pack(side="left", padx=(12, 0), pady=(8, 0))
+            style="Subtitle.TLabel",
+        ).pack(side="left", padx=(14, 0), pady=(10, 0))
+        tk.Frame(main, bg=BORDER, height=1).pack(fill="x", pady=(0, 12))
 
-        bar = ttk.Frame(main)
-        bar.pack(side="bottom", fill="x", pady=(10, 0))
+        footer = ttk.Frame(main)
+        footer.pack(side="bottom", fill="x", pady=(12, 0))
+        tk.Frame(footer, bg=BORDER, height=1).pack(fill="x", pady=(0, 10))
+        bar = ttk.Frame(footer)
+        bar.pack(fill="x")
         self.status_var = tk.StringVar(value="Ready.")
-        ttk.Label(bar, textvariable=self.status_var, style="Muted.TLabel").pack(
-            side="left"
-        )
+        ttk.Label(
+            bar,
+            textvariable=self.status_var,
+            style="Muted.TLabel",
+            wraplength=640,
+            justify="left",
+        ).pack(side="left")
         self.stop_btn = ttk.Button(
             bar, text="Stop", style="Stop.TButton", command=self._stop
         )
@@ -427,13 +487,13 @@ class ManiaDLApp(tk.Tk):
         self.start_btn = ttk.Button(
             bar, text="Start", style="Accent.TButton", command=self._start
         )
-        self.start_btn.pack(side="right", padx=(0, 8))
+        self.start_btn.pack(side="right", padx=(0, 10))
 
         paned = ttk.Panedwindow(main, orient="horizontal")
         paned.pack(fill="both", expand=True)
 
         left = ttk.Frame(paned)
-        right = ttk.Frame(paned, padding=(12, 0, 0, 0))
+        right = ttk.Frame(paned, padding=(14, 0, 0, 0))
         paned.add(left, weight=0)
         paned.add(right, weight=1)
 
@@ -488,7 +548,7 @@ class ManiaDLApp(tk.Tk):
         self.min_sr_var = tk.StringVar()
         self.max_sr_var = tk.StringVar()
         self.min_favs_var = tk.StringVar()
-        self.sort_var = tk.StringVar(value=SORTS[0])
+        self.sort_var = tk.StringVar(value=SORT_LABELS[SORTS[0]])
         self.limit_var = tk.StringVar()
         self.workers_var = tk.StringVar()
         self.batch_var = tk.StringVar()
@@ -507,6 +567,7 @@ class ManiaDLApp(tk.Tk):
     def _api_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="osu! API", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         self._labeled(box, 0, "Client ID", ttk.Entry(box, textvariable=self.cid_var))
@@ -534,29 +595,22 @@ class ManiaDLApp(tk.Tk):
     def _folder_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Download folder", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
-        box.columnconfigure(1, weight=1)
+        box.columnconfigure(0, weight=1)
 
-        ttk.Label(box, text="Folder").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=3
-        )
         ttk.Entry(box, textvariable=self.out_var).grid(
-            row=0, column=1, sticky="ew", pady=3
+            row=0, column=0, sticky="ew", pady=3
         )
         ttk.Button(box, text="Browse", command=self._browse).grid(
-            row=0, column=2, padx=(6, 0), pady=3
+            row=0, column=1, padx=(6, 0), pady=3
         )
         ttk.Button(box, text="Open", command=self._open_folder).grid(
-            row=0, column=3, padx=(6, 0), pady=3
+            row=0, column=2, padx=(6, 0), pady=3
         )
-        ttk.Label(
-            box,
-            text="Only .osz files and status.json are written here.",
-            style="Muted.TLabel",
-        ).grid(row=1, column=1, columnspan=3, sticky="w", pady=(4, 0))
 
     def _filter_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Filters", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         ttk.Label(box, text="Statuses").grid(
@@ -585,7 +639,7 @@ class ManiaDLApp(tk.Tk):
             ttk.Entry(box, textvariable=self.keys_var),
         )
         ttk.Label(
-            box, text="all, or comma-separated (4,7)", style="Muted.TLabel"
+            box, text="all or 4,7", style="Muted.TLabel"
         ).grid(row=2, column=1, sticky="w", pady=(0, 3))
 
         stars = ttk.Frame(box)
@@ -612,7 +666,7 @@ class ManiaDLApp(tk.Tk):
         sort = ttk.Combobox(
             box,
             textvariable=self.sort_var,
-            values=SORTS,
+            values=[SORT_LABELS[key] for key in SORTS],
             state="readonly",
         )
         self._labeled(box, 5, "Sort by", sort)
@@ -629,6 +683,7 @@ class ManiaDLApp(tk.Tk):
     def _download_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Download behaviour", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         self._labeled(
@@ -647,16 +702,11 @@ class ManiaDLApp(tk.Tk):
                 box, textvariable=self.batch_var, from_=1, to=500, width=10
             ),
         )
-        ttk.Label(
-            box,
-            text="Mirrors are paced automatically; 429s pause the host.",
-            style="Muted.TLabel",
-            wraplength=320,
-        ).grid(row=2, column=1, sticky="w", pady=(4, 0))
 
     def _advanced_section(self, parent) -> None:
         box = ttk.Labelframe(parent, text="Advanced filters", padding=(10, 8))
         box.pack(fill="x", pady=(0, 10))
+        box.columnconfigure(0, minsize=112)
         box.columnconfigure(1, weight=1)
 
         head = ttk.Frame(box)
@@ -676,6 +726,7 @@ class ManiaDLApp(tk.Tk):
         self.adv_frame.grid(
             row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
+        self.adv_frame.columnconfigure(0, minsize=112)
         self.adv_frame.columnconfigure(1, weight=1)
         self.adv_inputs: list[tk.Widget] = []
 
@@ -713,63 +764,97 @@ class ManiaDLApp(tk.Tk):
         widget.grid(row=row, column=1, sticky="ew", pady=3)
 
     def _build_status(self, parent) -> None:
-        top = ttk.Frame(parent)
-        top.pack(fill="x")
+        head = ttk.Frame(parent, style="Card.TFrame", padding=(16, 14))
+        head.pack(fill="x")
+        head.columnconfigure(0, weight=1)
+
+        topline = ttk.Frame(head, style="Card.TFrame")
+        topline.pack(fill="x")
+        ttk.Label(topline, text="RUN STATUS", style="CardTitle.TLabel").pack(
+            side="left"
+        )
         self.run_state_var = tk.StringVar(value="Idle")
-        ttk.Label(
-            top, textvariable=self.run_state_var, style="Header.TLabel"
-        ).pack(anchor="w")
+        self.state_chip = tk.Label(
+            topline,
+            textvariable=self.run_state_var,
+            bg=PANEL_ALT,
+            fg=MUTED,
+            padx=12,
+            pady=3,
+            font=("Segoe UI Semibold", 9),
+            borderwidth=0,
+        )
+        self.state_chip.pack(side="right")
+
         self.summary_var = tk.StringVar(
             value="Set your filters on the left, then press Start."
         )
         ttk.Label(
-            top,
+            head,
             textvariable=self.summary_var,
-            style="Muted.TLabel",
+            style="CardMeta.TLabel",
             justify="left",
-            wraplength=660,
-        ).pack(anchor="w", pady=(2, 8))
+            wraplength=640,
+        ).pack(fill="x", pady=(8, 0))
 
-        progress_box = ttk.Frame(parent)
-        progress_box.pack(fill="x")
+        progress = ttk.Frame(parent, style="Card.TFrame", padding=(16, 14))
+        progress.pack(fill="x", pady=(10, 0))
+        prow = ttk.Frame(progress, style="Card.TFrame")
+        prow.pack(fill="x")
+        ttk.Label(prow, text="OVERALL PROGRESS", style="CardTitle.TLabel").pack(
+            side="left", pady=(4, 0)
+        )
+        self.overall_pct_var = tk.StringVar(value="0%")
+        ttk.Label(
+            prow, textvariable=self.overall_pct_var, style="CardValueAccent.TLabel"
+        ).pack(side="right")
         self.overall_bar = ttk.Progressbar(
-            progress_box, mode="determinate", maximum=100
+            progress, mode="determinate", maximum=100
         )
-        self.overall_bar.pack(side="left", fill="x", expand=True)
+        self.overall_bar.pack(fill="x", pady=(10, 6))
         self.overall_label = ttk.Label(
-            progress_box, text="0 / 0", width=20, anchor="e"
+            progress, text="0 / 0", style="CardMeta.TLabel", anchor="w"
         )
-        self.overall_label.pack(side="right", padx=(8, 0))
+        self.overall_label.pack(fill="x")
 
         stats = ttk.Frame(parent)
-        stats.pack(fill="x", pady=(8, 0))
+        stats.pack(fill="x", pady=(10, 0))
+        for column in range(6):
+            stats.columnconfigure(column, weight=1, uniform="stat")
         self.stat_vars: dict[str, tk.StringVar] = {}
-        for index, (key, title, style, initial) in enumerate(
-            [
-                ("ok", "OK", "Ok.TLabel", "0"),
-                ("fail", "FAIL", "Fail.TLabel", "0"),
-                ("active", "ACTIVE", "Info.TLabel", "0"),
-                ("mb", "DATA", "Info.TLabel", "0.0 MB"),
-                ("rate", "RATE", "Info.TLabel", "0.00 MB/s"),
-                ("free", "FREE", "Warn.TLabel", "?"),
-            ]
-        ):
-            cell = ttk.Frame(stats)
-            cell.grid(row=0, column=index, sticky="w", padx=(0, 22))
+        stat_specs = [
+            ("ok", "DOWNLOADED", "CardValueGreen.TLabel", "0"),
+            ("fail", "FAILED", "CardValueRed.TLabel", "0"),
+            ("active", "ACTIVE", "CardValueAccent.TLabel", "0"),
+            ("mb", "DATA", "CardValue.TLabel", "0.0 MB"),
+            ("rate", "SPEED", "CardValue.TLabel", "0.00 MB/s"),
+            ("free", "FREE DISK", "CardValue.TLabel", "?"),
+        ]
+        for index, (key, title, value_style, initial) in enumerate(stat_specs):
+            card = ttk.Frame(stats, style="Card.TFrame", padding=(12, 10))
+            card.grid(
+                row=0,
+                column=index,
+                sticky="nsew",
+                padx=(0 if index == 0 else 6, 0),
+            )
             var = tk.StringVar(value=initial)
             self.stat_vars[key] = var
-            ttk.Label(cell, text=title, style=style).pack(anchor="w")
-            ttk.Label(cell, textvariable=var).pack(anchor="w")
+            ttk.Label(card, text=title, style="CardTitle.TLabel").pack(anchor="w")
+            ttk.Label(card, textvariable=var, style=value_style).pack(
+                anchor="w", pady=(4, 0)
+            )
 
-        transfers = ttk.Labelframe(
-            parent, text="Active downloads", padding=(6, 6)
-        )
+        transfers = ttk.Frame(parent, style="Card.TFrame", padding=(16, 12))
         transfers.pack(fill="x", pady=(10, 0))
+        ttk.Label(
+            transfers, text="ACTIVE DOWNLOADS", style="CardTitle.TLabel"
+        ).pack(anchor="w", pady=(0, 8))
         self.transfers = ttk.Treeview(
             transfers,
             columns=("set", "pct"),
             show="headings",
-            height=4,
+            height=3,
             selectmode="none",
         )
         self.transfers.heading("set", text="Set")
@@ -782,36 +867,6 @@ class ManiaDLApp(tk.Tk):
         self.transfers.configure(yscrollcommand=tbar.set)
         tbar.pack(side="right", fill="y")
         self.transfers.pack(side="left", fill="x", expand=True)
-
-        mirrors = ttk.Labelframe(parent, text="Mirror health", padding=(6, 6))
-        mirrors.pack(fill="x", pady=(10, 0))
-        self.mirror_tree = ttk.Treeview(
-            mirrors,
-            columns=("mirror", "state", "ok", "fail", "streak"),
-            show="headings",
-            height=6,
-            selectmode="none",
-        )
-        for column, label, width, anchor in [
-            ("mirror", "Mirror", 160, "w"),
-            ("state", "State", 150, "w"),
-            ("ok", "OK", 60, "e"),
-            ("fail", "Fail", 60, "e"),
-            ("streak", "Streak", 70, "e"),
-        ]:
-            self.mirror_tree.heading(column, text=label)
-            self.mirror_tree.column(column, width=width, anchor=anchor)
-        self.mirror_tree.tag_configure("ready", foreground=GREEN)
-        self.mirror_tree.tag_configure("warn", foreground=YELLOW)
-        for name, _template in MIRRORS:
-            self.mirror_tree.insert(
-                "",
-                "end",
-                iid=name,
-                values=(name, "ready", "0", "0", "0"),
-                tags=("ready",),
-            )
-        self.mirror_tree.pack(fill="x")
 
         notebook = ttk.Notebook(parent)
         notebook.pack(fill="both", expand=True, pady=(10, 0))
@@ -828,8 +883,9 @@ class ManiaDLApp(tk.Tk):
             borderwidth=0,
             highlightthickness=0,
             wrap="word",
-            padx=8,
-            pady=8,
+            padx=12,
+            pady=10,
+            font=("Consolas", 9),
             state="disabled",
         )
         log_bar = ttk.Scrollbar(
@@ -875,6 +931,19 @@ class ManiaDLApp(tk.Tk):
         )
 
     # ---- small actions --------------------------------------------------
+
+    def _set_state(self, text: str, kind: str = "idle") -> None:
+        """Update the run-state chip text and colour."""
+        palette = {
+            "idle": (PANEL_ALT, MUTED),
+            "running": ("#1e2c44", ACCENT),
+            "done": ("#202e22", GREEN),
+            "stopped": ("#382f1c", YELLOW),
+            "error": ("#3a2028", RED),
+        }
+        bg, fg = palette.get(kind, palette["idle"])
+        self.run_state_var.set(text)
+        self.state_chip.configure(bg=bg, fg=fg)
 
     def _dark_titlebar(self) -> None:
         """Ask DWM for a dark title bar on Windows 10/11."""
@@ -1008,7 +1077,7 @@ class ManiaDLApp(tk.Tk):
         self._clear_log()
         self._clear_failed()
         self.summary_var.set("Starting...")
-        self.run_state_var.set("Running")
+        self._set_state("Running", "running")
         self.status_var.set("Signing in...")
         self.started = time.time()
         self._free_at = 0.0
@@ -1016,7 +1085,8 @@ class ManiaDLApp(tk.Tk):
         self._set_running_ui(True)
         self.transfers.delete(*self.transfers.get_children())
         self.overall_bar.configure(value=0)
-        self.overall_label.configure(text="0 / 0")
+        self.overall_pct_var.set("0%")
+        self.overall_label.configure(text="0 / 0 sets")
 
         self.worker = threading.Thread(
             target=self._worker, args=(cfg, cid, secret), daemon=True
@@ -1057,12 +1127,12 @@ class ManiaDLApp(tk.Tk):
         self._set_running_ui(False)
         self._refresh_live()
         stopped = result.get("stopped")
-        self.run_state_var.set("Stopped" if stopped else "Done")
+        self._set_state("Stopped" if stopped else "Done", "stopped" if stopped else "done")
 
         rows = ui.search_rows(
             result["matched"], result["todo"], self.cfg or config.cfg_from_raw({})
         )
-        self.summary_var.set("    ".join(f"{key}: {value}" for key, value in rows))
+        self.summary_var.set("   ·   ".join(f"{key}: {value}" for key, value in rows))
 
         self.failed_entries = reports.failed_entries(
             result["failed"].keys(), result["titles"]
@@ -1100,7 +1170,7 @@ class ManiaDLApp(tk.Tk):
             )
 
         if result.get("mirrors_exhausted"):
-            self.run_state_var.set("Paused safely")
+            self._set_state("Paused safely", "stopped")
             self.status_var.set(
                 "Stopped early: the mirrors rate-limited this IP. "
                 "Re-run later; finished sets are already recorded."
@@ -1114,7 +1184,7 @@ class ManiaDLApp(tk.Tk):
         self.running = False
         self._set_running_ui(False)
         self._refresh_live()
-        self.run_state_var.set("Error")
+        self._set_state("Error", "error")
         self.status_var.set("Stopped with an error; see the log.")
         runtime.log(f"Error: {message}")
         messagebox.showerror("ManiaDL", message, parent=self)
@@ -1175,11 +1245,11 @@ class ManiaDLApp(tk.Tk):
         if overall:
             total = overall[0].get("total") or 0
             done = overall[0].get("completed") or 0
-            self.overall_bar.configure(
-                value=(done / total * 100) if total else 0
-            )
+            pct = (done / total * 100) if total else 0
+            self.overall_bar.configure(value=pct)
+            self.overall_pct_var.set(f"{pct:.0f}%")
             self.overall_label.configure(
-                text=f"{int(done)} / {int(total)}" if total else "searching..."
+                text=f"{int(done)} / {int(total)} sets" if total else "searching..."
             )
 
         tasks = self.progress.snapshot()["tasks"]
@@ -1209,36 +1279,16 @@ class ManiaDLApp(tk.Tk):
         self.stat_vars["mb"].set(f"{megabytes:,.1f} MB")
         self.stat_vars["rate"].set(f"{megabytes / elapsed:,.2f} MB/s")
         if now - self._free_at >= 2.0 and self.cfg:
-            self._free_text = f"{util.free_gb(self.cfg['out']):,.1f} GB"
+            try:
+                self._free_text = f"{util.free_gb(self.cfg['out']):,.1f} GB"
+            except OSError:
+                self._free_text = "?"
             self._free_at = now
         self.stat_vars["free"].set(self._free_text)
 
         message = self.progress.snapshot()["message"]
         if message:
             self.status_var.set(message)
-
-        for name, _template in MIRRORS:
-            entry = runtime.mstats[name]
-            if entry["until"] > now:
-                state = f"cooling {entry['until'] - now:.0f}s"
-                tag = "warn"
-            elif entry["streak"] >= 2:
-                state = "shaky"
-                tag = "warn"
-            else:
-                state = "ready"
-                tag = "ready"
-            self.mirror_tree.item(
-                name,
-                values=(
-                    name,
-                    state,
-                    entry["ok"],
-                    entry["fail"],
-                    entry["streak"],
-                ),
-                tags=(tag,),
-            )
 
     # ---- log/failed helpers --------------------------------------------
 

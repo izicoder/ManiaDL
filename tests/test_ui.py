@@ -60,6 +60,7 @@ class SummaryTests(unittest.TestCase):
     def test_basic_rows_only_when_advanced_off(self):
         rows = dict(ui.summary_rows(make_cfg(advanced=False)))
         self.assertEqual(rows["Status"], "ranked")
+        self.assertEqual(rows["Sort"], "Most favourites")
         self.assertEqual(rows["Parallel / batch"], "4 / 20")
         self.assertNotIn("Title contains", rows)
 

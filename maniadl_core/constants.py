@@ -101,6 +101,16 @@ SORTS = [
     "relevance_desc",
 ]
 
+# Friendly combobox labels; the stored config keeps the raw API sort key.
+SORT_LABELS = {
+    "favourites_desc": "Most favourites",
+    "plays_desc": "Most played",
+    "ranked_desc": "Recently ranked",
+    "updated_desc": "Recently updated",
+    "difficulty_desc": "Difficulty",
+    "relevance_desc": "Relevance",
+}
+
 # Legacy keys are required for reusing an existing config without prompting.
 SETTING_KEYS = [
     "out",
