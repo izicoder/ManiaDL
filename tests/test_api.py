@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from maniadl_core import api, config
+from maniadl_core.constants import GENRE_IDS, LANGUAGE_IDS
 from tests.fakes import FakeResponse, FakeSession, FakeSpinner
 
 
@@ -57,6 +58,8 @@ def make_set(
         "play_count": play_count,
         "nsfw": nsfw,
         "bpm": bpm,
+        "genre_id": GENRE_IDS.get(genre.lower()),
+        "language_id": LANGUAGE_IDS.get(language.lower()),
         "genre": {"name": genre},
         "language": {"name": language},
         "ranked_date": ranked_date,
@@ -118,6 +121,19 @@ class BuildQueryTests(unittest.TestCase):
     def test_minimal_query(self):
         cfg = make_cfg(advanced=True, query="camellia", title="ghost")
         self.assertEqual(api.minimal_query(cfg, 7), "camellia keys=7")
+
+    def test_search_params_narrows_genre_and_language(self):
+        cfg = make_cfg(advanced=True, genre="electronic", language="instrumental")
+        params = api.search_params(cfg, 4)
+        self.assertEqual(params["g"], "10")
+        self.assertEqual(params["l"], "5")
+        self.assertIn("keys=4", params["q"])
+
+    def test_search_params_keeps_multiple_genres_client_side(self):
+        cfg = make_cfg(advanced=True, genre="electronic, rock")
+        params = api.search_params(cfg, None)
+        self.assertNotIn("g", params)
+        self.assertEqual(cfg["genre_ids"], [4, 10])
 
 
 class QualifiesTests(unittest.TestCase):
@@ -200,6 +216,21 @@ class QualifiesTests(unittest.TestCase):
         cfg = make_cfg(advanced=True, include_nsfw=True)
         self.assertTrue(api.qualifies(make_set(nsfw=True), cfg))
 
+    def test_genre_and_language_use_api_ids(self):
+        """Search responses carry ids, not name objects."""
+        cfg = make_cfg(advanced=True, genre="electronic", language="instrumental")
+        data = make_set()
+        data.pop("genre")
+        data.pop("language")
+        self.assertTrue(api.qualifies(data, cfg))
+
+        data["genre_id"] = GENRE_IDS["rock"]
+        self.assertFalse(api.qualifies(data, cfg))
+
+    def test_unknown_genre_is_rejected_at_parse_time(self):
+        with self.assertRaises(ValueError):
+            make_cfg(advanced=True, genre="drum and bass")
+
 
 class SearchOneTests(unittest.IsolatedAsyncioTestCase):
     async def test_paginates_and_filters(self):
@@ -275,6 +306,39 @@ class SearchSetsFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["id"] for item in sets], [1])
         self.assertEqual(len(session.get_calls), 2)
         self.assertIn("camellia", session.get_calls[1][1]["params"]["q"])
+
+
+class SearchPacerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_second_request_waits_for_the_interval(self):
+        pacer = api.SearchPacer(interval=5.0)
+        with patch("maniadl_core.api.asyncio.sleep", new=AsyncMock()) as sleep, patch(
+            "maniadl_core.api.search_delay", return_value=5.0
+        ):
+            await pacer.wait()
+            sleep.assert_not_called()
+            await pacer.wait()
+            sleep.assert_awaited_once()
+
+    async def test_rate_limit_stretches_then_recovers(self):
+        pacer = api.SearchPacer(interval=1.0)
+        pacer.penalise(12)
+        self.assertEqual(pacer.interval, 12.0)
+        for _ in range(40):
+            pacer.success()
+        self.assertEqual(pacer.interval, 1.0)
+
+
+class SearchParamRequestTests(unittest.IsolatedAsyncioTestCase):
+    async def test_genre_and_language_are_sent_as_api_params(self):
+        cfg = make_cfg(advanced=True, genre="electronic", language="instrumental")
+        session = FakeSession(
+            [FakeResponse(json_data={"beatmapsets": [], "cursor_string": None})]
+        )
+        with patch("maniadl_core.api.search_delay", return_value=0):
+            await api.search_sets(session, "token", cfg, FakeSpinner())
+        params = session.get_calls[0][1]["params"]
+        self.assertEqual(params["g"], "10")
+        self.assertEqual(params["l"], "5")
 
 
 if __name__ == "__main__":

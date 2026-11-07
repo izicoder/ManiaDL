@@ -12,7 +12,9 @@ from .constants import (
     API,
     API_STATUSES,
     API_UA,
-    SEARCH_DELAY,
+    SEARCH_INTERVAL,
+    SEARCH_JITTER,
+    SEARCH_MAX_INTERVAL,
     SEARCH_MAX_PAGES,
     SEARCH_RETRIES,
     TOKEN_URL,
@@ -34,8 +36,46 @@ class SearchRejected(Exception):
     """osu! returned HTTP 400 for the query; retry with fewer server filters."""
 
 
-def search_delay() -> float:
-    return SEARCH_DELAY + random.uniform(0.0, 0.5)
+def search_delay(interval: float = SEARCH_INTERVAL) -> float:
+    """Wait before the next osu! request; ~60 requests/minute at the base."""
+    return interval * (1.0 + random.uniform(0.0, SEARCH_JITTER))
+
+
+class SearchPacer:
+    """Adaptive request pacer for the osu! API.
+
+    The gap is measured from the start of a request, so the network round trip
+    is part of it instead of being added to it. A 429 stretches the gap well
+    past ``Retry-After`` and successes shrink it back to the base rate.
+    """
+
+    def __init__(self, interval: float = SEARCH_INTERVAL) -> None:
+        self.base = interval
+        self.interval = interval
+        self.ceiling = SEARCH_MAX_INTERVAL
+        self.requests = 0
+        self._next = 0.0
+        self._lock = asyncio.Lock()
+
+    async def wait(self) -> None:
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            if self._next > now:
+                await asyncio.sleep(self._next - now)
+            self.requests += 1
+            self._next = loop.time() + search_delay(self.interval)
+
+    def success(self) -> None:
+        if self.interval > self.base:
+            self.interval = max(self.base, self.interval * 0.9)
+
+    def penalise(self, seconds: float) -> None:
+        """Park the next request for at least ``seconds`` and slow the pace."""
+        seconds = max(0.0, float(seconds))
+        self.interval = min(self.ceiling, max(self.interval * 2, seconds))
+        now = asyncio.get_running_loop().time()
+        self._next = max(self._next, now + seconds)
 
 
 async def get_token(session: aiohttp.ClientSession, cid, secret: str) -> str:
@@ -113,12 +153,6 @@ def _haystack(set_data: dict) -> str:
     for beatmap in set_data.get("beatmaps") or []:
         parts.append(str(beatmap.get("version") or ""))
     return " ".join(parts).lower()
-
-
-def _name(value) -> str:
-    if isinstance(value, dict):
-        return str(value.get("name") or "").lower()
-    return ""
 
 
 def _set_bpm(set_data: dict) -> float:
@@ -205,26 +239,32 @@ def qualifies(set_data: dict, cfg: dict) -> bool:
     if not cfg["include_nsfw"] and set_data.get("nsfw"):
         return False
 
-    haystack = _haystack(set_data)
+    terms = cfg.get("query_terms")
+    if terms is None:
+        terms = util.simple_query_terms(cfg["query"])
+    exclude = cfg["exclude"]
+    text_fields = [
+        (cfg.get(field, "").lower(), field)
+        for field in ("title", "artist", "creator", "source")
+        if cfg.get(field)
+    ]
+    if terms or exclude or text_fields:
+        haystack = _haystack(set_data)
+        for term in terms:
+            if term not in haystack:
+                return False
+        for term in exclude:
+            if term in haystack:
+                return False
+    for needle, field in text_fields:
+        if needle not in _text_field(set_data, field).lower():
+            return False
 
-    for term in util.simple_query_terms(cfg["query"]):
-        if term not in haystack:
+    if cfg.get("genre_ids"):
+        if set_data.get("genre_id") not in cfg["genre_ids"]:
             return False
-    for term in cfg["exclude"]:
-        if term in haystack:
-            return False
-    for field in ("title", "artist", "creator", "source"):
-        needle = cfg.get(field, "").lower()
-        if needle and needle not in _text_field(set_data, field).lower():
-            return False
-
-    if cfg["genre"]:
-        genre = _name(set_data.get("genre"))
-        if not any(term in genre for term in cfg["genre"]):
-            return False
-    if cfg["language"]:
-        language = _name(set_data.get("language"))
-        if not any(term in language for term in cfg["language"]):
+    if cfg.get("language_ids"):
+        if set_data.get("language_id") not in cfg["language_ids"]:
             return False
 
     bpm = _set_bpm(set_data)
@@ -311,6 +351,28 @@ def minimal_query(cfg: dict, key: int | None) -> str:
     return " ".join(part for part in parts if part)
 
 
+def search_params(cfg: dict, key: int | None) -> dict:
+    """API parameters shared by the primary and the fallback search."""
+    params = {
+        "m": "3",
+        "sort": cfg["sort"],
+        "nsfw": "true" if cfg["include_nsfw"] else "false",
+    }
+    query = build_query(cfg, key)
+    if query:
+        params["q"] = query
+    # The API takes a single genre/language id per request, so only narrow
+    # server-side when the user's terms resolve to exactly one value. Multiple
+    # values are still enforced by qualifies().
+    genre_ids = cfg.get("genre_ids") or []
+    language_ids = cfg.get("language_ids") or []
+    if len(genre_ids) == 1:
+        params["g"] = str(genre_ids[0])
+    if len(language_ids) == 1:
+        params["l"] = str(language_ids[0])
+    return params
+
+
 async def search_one(
     session,
     headers,
@@ -318,10 +380,13 @@ async def search_one(
     cfg,
     found,
     status,
+    pacer: SearchPacer | None = None,
 ) -> None:
+    pacer = pacer or SearchPacer()
     cursor = None
     seen_cursors: set[str] = set()
     pages = 0
+    scanned = 0
 
     while len(found) < cfg["limit"]:
         if runtime.should_stop():
@@ -332,24 +397,27 @@ async def search_one(
 
         data = None
         for attempt in range(SEARCH_RETRIES):
+            await pacer.wait()
             try:
                 async with session.get(
                     f"{API}/beatmapsets/search", params=query, headers=headers
                 ) as response:
                     if response.status == 429:
                         wait = util.retry_after(response.headers, 15)
+                        # The pacer makes the retry itself wait; no inline sleep
+                        # that would stack on top of the normal spacing.
+                        pacer.penalise(wait)
                         runtime.log(
                             f"[yellow]…[/] osu! API rate limit; waiting {wait}s"
                         )
-                        await asyncio.sleep(wait)
                         continue
                     if response.status >= 500:
                         wait = min(2**attempt + random.uniform(0, 1.5), 30)
+                        pacer.penalise(wait)
                         runtime.log(
                             f"[yellow]![/] osu! API HTTP {response.status}; "
                             f"retrying in {wait:.0f}s"
                         )
-                        await asyncio.sleep(wait)
                         continue
                     if response.status == 400:
                         detail = (await response.text())[:200].strip()
@@ -359,32 +427,37 @@ async def search_one(
                             f"Search failed (HTTP {response.status})."
                         )
                     data = await response.json()
+                pacer.success()
                 break
             except SearchRejected:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
                 wait = min(2**attempt + random.uniform(0, 1.5), 30)
+                pacer.penalise(wait)
                 runtime.log(
                     f"[yellow]![/] search error ({type(exc).__name__}); "
                     f"retrying in {wait:.0f}s"
                 )
-                await asyncio.sleep(wait)
         if data is None:
             raise SystemExit("Search failed after retries.")
 
         if data.get("error"):
             runtime.log(f"[yellow]![/] osu! search: {data['error']}")
 
-        for set_data in data.get("beatmapsets") or []:
+        page_sets = data.get("beatmapsets") or []
+        scanned += len(page_sets)
+        for set_data in page_sets:
             if qualifies(set_data, cfg):
                 found[set_data["id"]] = set_data
 
+        matched = min(len(found), cfg["limit"])
         status.update(
-            f"Searching... {len(found)} matching sets"
+            f"Searching... {matched} / {cfg['limit']} matching "
+            f"({scanned} scanned)"
         )
 
         cursor = data.get("cursor_string")
-        if not cursor or not data.get("beatmapsets"):
+        if not cursor or not page_sets:
             break
         if cursor in seen_cursors:
             break
@@ -393,12 +466,12 @@ async def search_one(
         if pages >= SEARCH_MAX_PAGES:
             runtime.log("[yellow]![/] search page cap reached; stopping search.")
             break
-        await asyncio.sleep(search_delay())
 
 
 async def search_sets(session, token, cfg, status) -> list:
     headers = {"Authorization": f"Bearer {token}", "User-Agent": API_UA}
     found: dict = {}
+    pacer = SearchPacer()
     key_list = cfg["keys"] if cfg["keys"] is not None else [None]
 
     combos: list[tuple[str, int | None]] = []
@@ -414,20 +487,13 @@ async def search_sets(session, token, cfg, status) -> list:
         if len(found) >= cfg["limit"] or runtime.should_stop():
             break
 
-        params = {
-            "m": "3",
-            "sort": cfg["sort"],
-            "nsfw": "true" if cfg["include_nsfw"] else "false",
-        }
+        params = search_params(cfg, key)
         if api_status != "any":
             params["s"] = api_status
-        query = build_query(cfg, key)
-        if query:
-            params["q"] = query
 
         try:
             await search_one(
-                session, headers, params, cfg, found, status
+                session, headers, params, cfg, found, status, pacer
             )
         except SearchRejected as exc:
             runtime.log(
@@ -442,7 +508,7 @@ async def search_sets(session, token, cfg, status) -> list:
                 fallback.pop("q", None)
             try:
                 await search_one(
-                    session, headers, fallback, cfg, found, status
+                    session, headers, fallback, cfg, found, status, pacer
                 )
             except SearchRejected:
                 fallback.pop("q", None)
@@ -451,8 +517,11 @@ async def search_sets(session, token, cfg, status) -> list:
                     "query. Client-side filters still apply."
                 )
                 await search_one(
-                    session, headers, fallback, cfg, found, status
+                    session, headers, fallback, cfg, found, status, pacer
                 )
 
     sets = list(found.values())
+    runtime.log(
+        f"Search: {len(sets)} matching sets from {pacer.requests} osu! requests."
+    )
     return sets[: cfg["limit"]]

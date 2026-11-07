@@ -44,8 +44,9 @@ lives in `maniadl_core/`:
 - `config.py` — load/save config, migrate old configs, `cfg_from_raw()`.
 - `ui.py` — pure label helpers (`range_label`, `date_label`, `summary_rows`,
   `search_rows`) used by the GUI; no widgets, no rich.
-- `api.py` — osu! OAuth token, search pagination, query building, client-side
-  `qualifies()`, search-query fallback.
+- `api.py` — osu! OAuth token, adaptive search pacing, search pagination,
+  query building, genre/language id resolution, client-side `qualifies()`,
+  search-query fallback.
 - `mirrors.py` — mirror selection, per-host rate limiting, resumable `fetch()`,
   `download_set()`.
 - `state.py` — `Status` (`status.json`), legacy text-file import, `scan_existing`.
@@ -63,7 +64,9 @@ Main flow:
    `app.run()` in a daemon worker thread under `asyncio.run()`.
 3. `api.get_token()` exchanges client credentials for an OAuth access token.
 4. `api.search_sets()` loops API statuses × key counts, cursor-paginates
-   `GET /beatmapsets/search`, and applies `qualifies()` client-side.
+   `GET /beatmapsets/search` at the osu!-requested ~60 requests/minute, asks
+   the API to narrow by genre/language id (`g`/`l`), and applies `qualifies()`
+   client-side.
 5. `state.scan_existing(out) | status.ids` filters `todo`; batches of
    `cfg["batch"]` run `download_set` under an `asyncio.Semaphore(cfg["workers"])`.
 6. Each set: `choose_mirror()` ranks healthy mirrors → `fetch()` to `NNN.part`
@@ -90,6 +93,9 @@ Main flow:
   dropped by `migrate_saved()`.
 - Status mapping `STATUS_SETS` (e.g. `ranked` → `{ranked, approved}`); API
   statuses live in `API_STATUSES` (e.g. `pending` → `pending` + `wip`).
+- `GENRE_IDS` / `LANGUAGE_IDS` mirror osu!'s fixed taxonomy. `cfg_from_raw()`
+  resolves the UI's partial names to ids; the search sends `g`/`l` when a
+  filter resolves to exactly one id.
 - External services: osu! v2 API (`https://osu.ppy.sh/api/v2`, token at
   `https://osu.ppy.sh/oauth/token`), mirrors in `MIRRORS` (`nerinyan`, `nekoha`,
   `catboy`, `beatconnect`, `osu.direct`, `sayobot`). No database/cache/queue.
@@ -98,6 +104,9 @@ Main flow:
 
 - Do not send `BROWSER_HEADERS` to the osu! API; use `API_UA`. Browser UA +
   mirror `Referer` is only for mirror downloads (Cloudflare 403s otherwise).
+- Keep the osu! API search at ~60 requests/minute (`SEARCH_INTERVAL`). The
+  pacer measures from request start and stretches after 429s; do not replace it
+  with a fixed post-response sleep or remove it to "speed up" search.
 - Do not retry a mirror 429 inline. `RateLimited` parks the whole host in
   `runtime.mstats`; the run stops when all mirrors are parked.
 - Do not write `status.json` non-atomically or by hand; `Status.save()` owns it.
@@ -161,9 +170,14 @@ Main flow:
   sleep-and-retry on 429 is how the IP gets banned — the stop is intentional.
 - `limit` caps total matches; already-downloaded sets are filtered out after
   the search, so raise `limit` when you want to reach further into the results.
-- Advanced filters are applied twice: a server-side `q` narrows the search, and
-  `api.qualifies()` is authoritative. If osu! rejects the query (HTTP 400),
-  `search_sets()` falls back to fewer server-side filters automatically.
+- Advanced filters are applied twice: a server-side `q` (and `g`/`l` for a
+  single resolved genre/language) narrows the search, and `api.qualifies()` is
+  authoritative. If osu! rejects the query (HTTP 400), `search_sets()` falls
+  back to fewer server-side filters automatically.
+- Search results carry `genre_id`/`language_id`, not `genre`/`language` name
+  objects. The UI accepts partial names; `config.resolve_ids()` maps them via
+  `GENRE_IDS`/`LANGUAGE_IDS`. Notes and play count have no server-side filter,
+  so those two filters can still scan many pages when set narrowly.
 - `length` is checked per matching difficulty (the API filters nested beatmaps);
   BPM, genre, language, ranked date and favourites are set-level.
 - Stop is cooperative: `runtime.request_stop()` is checked between batches, in

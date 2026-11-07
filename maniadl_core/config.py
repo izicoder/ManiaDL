@@ -9,6 +9,8 @@ from . import util
 from .constants import (
     CONFIG_PATH,
     DEFAULT_OUT,
+    GENRE_IDS,
+    LANGUAGE_IDS,
     MAX_BPM,
     MAX_LENGTH,
     MAX_NOTES,
@@ -72,6 +74,29 @@ def _to_float(value, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def resolve_ids(terms: list[str], mapping: dict[str, int], kind: str) -> list[int]:
+    """Turn partial genre/language names into the numeric ids the API expects.
+
+    The UI accepts partial names (``elec`` matches ``Electronic``), so a term
+    may resolve to more than one id. Unknown terms are a configuration error
+    rather than a silently empty result.
+    """
+    ids: set[int] = set()
+    unknown: list[str] = []
+    for term in terms:
+        matches = [value for name, value in mapping.items() if term in name]
+        if not matches:
+            unknown.append(term)
+            continue
+        ids.update(matches)
+    if unknown:
+        known = ", ".join(sorted(mapping))
+        raise ValueError(
+            f"Unknown {kind}: {', '.join(unknown)}. Try one of: {known}"
+        )
+    return sorted(ids)
 
 
 def cfg_from_raw(raw: dict) -> dict:
@@ -169,10 +194,22 @@ def cfg_from_raw(raw: dict) -> dict:
                 "include_nsfw": False,
             }
         )
+    cfg["genre_ids"] = resolve_ids(cfg["genre"], GENRE_IDS, "genre")
+    cfg["language_ids"] = resolve_ids(cfg["language"], LANGUAGE_IDS, "language")
+    # Derived once per run so the per-set filter does no parsing or set building.
+    cfg["query_terms"] = util.simple_query_terms(cfg["query"])
+    cfg["allowed_statuses"] = (
+        None
+        if "any" in statuses
+        else frozenset().union(*(STATUS_SETS[item] for item in statuses))
+    )
     return cfg
 
 
 def status_allowed(cfg: dict, value: str) -> bool:
-    if "any" in cfg["statuses"]:
-        return True
-    return value in set().union(*(STATUS_SETS[item] for item in cfg["statuses"]))
+    allowed = cfg.get("allowed_statuses")
+    if allowed is None:
+        if "any" in cfg["statuses"]:
+            return True
+        allowed = frozenset().union(*(STATUS_SETS[item] for item in cfg["statuses"]))
+    return value in allowed

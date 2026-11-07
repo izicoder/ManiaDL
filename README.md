@@ -11,6 +11,9 @@ rate-limit handling and resume support.
 - Filter by status, key count, star rating, favourites, plays, BPM, length,
   notes, genre, language, ranked date, mapper/title/artist/source and NSFW.
 - Free-text osu! search query support (`stars>=5`, `keys=4`, `ranked>=2020`, ...).
+- Fast searches: requests are paced at osu!'s requested ~60 per minute, and
+  genre/language filters narrow the query on the server instead of only being
+  checked after every page. Nothing is cached between runs.
 - Parallel downloads with batching, per-host pacing and automatic mirror
   fallback (nerinyan, nekoha, catboy, beatconnect, osu.direct, sayobot).
 - Resumable transfers and `.osz` validation before a file is accepted.

@@ -50,8 +50,51 @@ MAX_RETRY_AFTER = 300
 # host, concurrency is capped and 429s park the host. No user toggle.
 HOST_INTERVAL = 0.9
 HOST_CONCURRENCY = 2
-SEARCH_DELAY = 1.8
+
+# The osu! API asks for at most ~60 requests per minute (one per second). We
+# pace from the start of each request, so network latency is not added on top
+# of the wait, and stretch the interval automatically after a 429.
+SEARCH_INTERVAL = 1.05
+SEARCH_MAX_INTERVAL = 30.0
+SEARCH_JITTER = 0.08
 BATCH_PAUSE = 3.0
+
+# osu! search returns fixed 50-set pages, so fewer requests is the only way to
+# search faster. Genre and language are free-text in the UI but the API takes
+# numeric ids (g/l); resolving them lets the server throw away non-matches
+# before pagination.
+GENRE_IDS = {
+    "video game": 2,
+    "anime": 3,
+    "rock": 4,
+    "pop": 5,
+    "other": 6,
+    "novelty": 7,
+    "hip hop": 9,
+    "electronic": 10,
+    "metal": 11,
+    "classical": 12,
+    "folk": 13,
+    "jazz": 14,
+    "unspecified": 1,
+}
+
+LANGUAGE_IDS = {
+    "english": 2,
+    "japanese": 3,
+    "chinese": 4,
+    "instrumental": 5,
+    "korean": 6,
+    "french": 7,
+    "german": 8,
+    "swedish": 9,
+    "spanish": 10,
+    "italian": 11,
+    "russian": 12,
+    "polish": 13,
+    "other": 14,
+    "unspecified": 1,
+}
 
 # Status persistence is batched to avoid rewriting JSON on every set.
 SAVE_EVERY = 8

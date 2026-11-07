@@ -43,6 +43,8 @@ def make_set(sid=123, title="Test Set"):
         "play_count": 100,
         "nsfw": False,
         "bpm": 180,
+        "genre_id": 10,
+        "language_id": 5,
         "genre": {"name": "Electronic"},
         "language": {"name": "Instrumental"},
         "ranked_date": "2023-01-01T00:00:00+00:00",

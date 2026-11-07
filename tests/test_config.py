@@ -65,6 +65,9 @@ class CfgFromRawTests(unittest.TestCase):
         self.assertEqual(cfg["query"], "camellia")
         self.assertEqual(cfg["exclude"], ["tv size"])
         self.assertEqual(cfg["genre"], ["electronic"])
+        self.assertEqual(cfg["genre_ids"], [10])
+        self.assertEqual(cfg["language_ids"], [5])
+        self.assertEqual(cfg["query_terms"], ["camellia"])
         self.assertEqual(cfg["min_bpm"], 150.0)
         self.assertEqual(cfg["max_bpm"], 220.0)
         self.assertEqual(cfg["min_length"], 60)
@@ -81,6 +84,12 @@ class CfgFromRawTests(unittest.TestCase):
             config.cfg_from_raw(legacy_raw(min_sr=-1))
         with self.assertRaises(ValueError):
             config.cfg_from_raw(advanced_raw(bpm_range="300-100"))
+        with self.assertRaises(ValueError):
+            config.cfg_from_raw(advanced_raw(genre="drum and bass"))
+
+    def test_partial_genre_names_resolve(self):
+        cfg = config.cfg_from_raw(advanced_raw(genre="elec"))
+        self.assertEqual(cfg["genre_ids"], [10])
 
     def test_limits_and_clamps(self):
         cfg = config.cfg_from_raw(
