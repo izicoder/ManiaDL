@@ -246,3 +246,20 @@ downloaded_ids.txt
 failed.txt
 *.part
 *.osz
+
+# ---- C# / .NET -------------------------------------------------------------
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# ---- Frontend --------------------------------------------------------------
+node_modules/
+ui/dist/
+ui/e2e/artifacts/
+*.tsbuildinfo
+
+# The WinForms host manifest is source, not generated output.
+!src/ManiaDL.Host/app.manifest
+
