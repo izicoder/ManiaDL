@@ -1,9 +1,10 @@
-name: Build release
+name: Build
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -16,26 +17,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
         with:
-          python-version: "3.12"
+          dotnet-version: "8.0.x"
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          enable-cache: true
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
 
-      - name: Install dependencies
-        run: uv sync --extra build
+      - name: Build frontend
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
 
-      - name: Run tests
-        run: uv run python -m unittest discover -s tests -t . -v
+      - name: Test
+        run: dotnet test ManiaDL.sln -c Release --nologo
 
-      - name: Build executable
-        run: uv run --extra build pyinstaller --noconfirm --onefile --windowed --name ManiaDL maniadl.py
+      - name: Publish
+        run: >
+          dotnet publish src/ManiaDL.Host/ManiaDL.Host.csproj
+          -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true
+          -o dist
 
-      - name: Upload build artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ManiaDL
