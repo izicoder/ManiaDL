@@ -190,7 +190,10 @@ only checks indirectly.
 ## Python quirks preserved (C7)
 
 The tests pin the quirks listed in `rewrite.md` C7: `=` in the date parser is an upper
-bound, failed IDs are only retried when the search returns them again, low disk fails the
-whole set, pre-existing valid `.osz` files do not count as downloads, `valid_osz` only
-requires one `.osu` entry, speed is a whole-run average, and `scan_existing` never writes
-`status.json`.
+bound, low disk fails the whole set, pre-existing valid `.osz` files do not count as
+downloads, `valid_osz` only requires one `.osu` entry, speed is a whole-run average, and
+`scan_existing` never writes `status.json`.
+
+**Deliberate deviation:** failed sets are retried by ID on the next run even when the
+search does not return them again (`OrchestratorTests.Previously_failed_sets_are_retried_even_when_search_omits_them`).
+Python only retried them when the search returned them.

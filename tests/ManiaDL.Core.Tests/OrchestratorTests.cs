@@ -116,6 +116,33 @@ public class OrchestratorTests
     }
 
     [Fact]
+    public async Task Previously_failed_sets_are_retried_even_when_search_omits_them()
+    {
+        using var tmp = new TempDir();
+        var folder = tmp.Combine("out");
+        Directory.CreateDirectory(folder);
+        TestData.WriteFile(folder, "status.json", """
+            {"version": 2, "updated": "", "downloaded": {}, "failed": [777], "titles": {"777": "Old Fail"}}
+            """);
+
+        var handler = new ScriptedHandler()
+            .Json(Token())
+            .Json(Page(Array.Empty<Beatmapset>()))
+            .Body(TestData.MakeOsz());
+
+        var (result, requests) = await RunAsync(folder, handler);
+
+        Assert.True(File.Exists(Path.Combine(folder, "777.osz")));
+        Assert.Equal(1, result.Todo);
+        Assert.Contains(requests.Requests, request =>
+            request.Method == "GET" &&
+            request.Uri.ToString().Contains("/777") &&
+            !request.Uri.ToString().Contains("/beatmapsets/search"));
+        using var payload = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "status.json")));
+        Assert.Empty(payload.RootElement.GetProperty("failed").EnumerateArray());
+    }
+
+    [Fact]
     public async Task Stale_link_report_is_removed()
     {
         using var tmp = new TempDir();

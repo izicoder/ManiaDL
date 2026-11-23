@@ -75,8 +75,32 @@ public sealed class DownloadOrchestrator
             .ConfigureAwait(false);
 
         var todo = sets.Where(set => !existing.Contains(set.Id)).ToList();
+
+        // Failed sets are retried by ID even when the search no longer returns them.
+        var todoIds = todo.Select(set => set.Id).ToHashSet();
+        var retried = 0;
+        foreach (var id in status.Failed)
+        {
+            if (existing.Contains(id) || !todoIds.Add(id))
+            {
+                continue;
+            }
+
+            todo.Add(new Beatmapset
+            {
+                Id = id,
+                Title = status.Titles.GetValueOrDefault(id, ""),
+            });
+            retried++;
+        }
+
+        if (retried > 0)
+        {
+            _ctx.Log.Info($"Retrying {retried} set(s) that failed last run.");
+        }
+
         _ctx.Log.Info(
-            $"Search finished: {sets.Count} matching, {sets.Count - todo.Count} already downloaded, " +
+            $"Search finished: {sets.Count} matching, {sets.Count - (todo.Count - retried)} already downloaded, " +
             $"{todo.Count} to fetch.");
 
         var failed = new Dictionary<long, string>();
