@@ -15,8 +15,8 @@ using Xunit;
 namespace ManiaDL.Core.Tests;
 
 /// <summary>
-/// Extra tests the Python suite lacks: golden files, cross-run folder contract,
-/// concurrency and host pacing (see C6 in rewrite.md).
+/// Extra tests the Python suite lacked: golden files, cross-run folder contract,
+/// concurrency and host pacing.
 /// </summary>
 public class GoldenFileTests
 {

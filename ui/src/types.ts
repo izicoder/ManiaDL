@@ -1,6 +1,6 @@
 /**
- * Types mirroring the bridge protocol (rewrite.md 6b). The host serialises
- * camelCase JSON; settings keep the snake_case config keys.
+ * Types mirroring the bridge protocol. The host serialises camelCase JSON;
+ * settings keep the snake_case config keys.
  */
 
 export type LogLevel = "info" | "success" | "warning" | "error" | "muted";

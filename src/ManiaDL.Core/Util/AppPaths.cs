@@ -4,7 +4,7 @@ namespace ManiaDL.Core.Util;
 
 /// <summary>
 /// Portable-first application paths. Config and default downloads live beside the
-/// executable, never beside the assembly inside a <c>--onefile</c>-style bundle.
+/// executable, never beside the assembly inside a packed single-file build.
 /// </summary>
 public sealed class AppPaths
 {
