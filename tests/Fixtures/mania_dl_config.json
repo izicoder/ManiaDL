@@ -1,0 +1,15 @@
+{
+  "client_id": "1234",
+  "client_secret": "secret",
+  "out": "C:\\mania",
+  "statuses": "ranked,loved",
+  "keys": "4",
+  "min_sr": 4,
+  "max_sr": 7,
+  "min_favs": 10,
+  "sort": "favourites_desc",
+  "limit": 50,
+  "workers": 4,
+  "batch": 20,
+  "safe_mode": false
+}
