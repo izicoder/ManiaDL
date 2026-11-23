@@ -2,6 +2,9 @@
 
 Bulk osu!mania beatmap downloader for osu!lazer.
 
+**[Download the latest Windows release](https://github.com/izicoder/ManiaDL/releases/latest)** —
+a standalone `ManiaDL.exe`; no .NET install required.
+
 Search the osu! API with the filters you care about, then download matching `.osz`
 sets from community mirrors with automatic fallback, rate-limit handling and resume
 support.
@@ -20,6 +23,13 @@ support.
 - Live status panel: overall progress, active downloads, stats and log.
 - Failed sets stay visible in the Failed downloads tab with direct osu! links.
 - One `status.json` per download folder remembers what was fetched and what failed.
+
+## Quick start
+
+1. Download `ManiaDL.exe` from the latest release and run it.
+2. Enter your osu! OAuth client ID and secret. Create them at
+   <https://osu.ppy.sh/home/account/edit> ("How to get keys" in the app opens the same page).
+3. Pick a download folder and your filters, then press **Start**.
 
 ## Requirements
 
