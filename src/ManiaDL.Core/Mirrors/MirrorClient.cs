@@ -24,9 +24,11 @@ public sealed class MirrorClient
         {
             await FetchCoreAsync(http, url, partPath, taskId, ctx, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (ctx.Token.IsCancellationRequested)
         {
             // Python's fetch() surfaces the stop flag as Stopped, never as a failure.
+            // A per-file read timeout must stay an OperationCanceledException so the
+            // caller can retry it as a transient error.
             throw new StoppedException();
         }
     }
