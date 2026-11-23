@@ -54,7 +54,7 @@ public sealed class DownloadService
                     break;
                 }
 
-                if (_ctx.Disk.FreeGb(cfg.Out) < Limits.MinFreeGb)
+                if (_ctx.Disk.FreeGb(cfg.Out) < _ctx.MinFreeGb)
                 {
                     _ctx.Log.Error("Low disk space, stopping this set.");
                     break;
@@ -131,7 +131,7 @@ public sealed class DownloadService
                         $"! {sid} {mirror.Name}: {ex.GetType().Name} {ex.Message} " +
                         $"(try {attempt + 1}/{Limits.Retries})");
 
-                    if (ex is IOException && _ctx.Disk.FreeGb(cfg.Out) < Limits.MinFreeGb)
+                    if (ex is IOException && _ctx.Disk.FreeGb(cfg.Out) < _ctx.MinFreeGb)
                     {
                         _ctx.Log.Error("Low disk space, stopping this set.");
                         break;

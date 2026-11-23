@@ -141,7 +141,7 @@ public sealed class DownloadOrchestrator
                     break;
                 }
 
-                if (_ctx.Disk.FreeGb(cfg.Out) < Limits.MinFreeGb)
+                if (_ctx.Disk.FreeGb(cfg.Out) < _ctx.MinFreeGb)
                 {
                     _ctx.Log.Error("Low disk space, stopping.");
                     break;

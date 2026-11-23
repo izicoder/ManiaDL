@@ -62,6 +62,9 @@ public sealed class RunContext
     public DiskSpace Disk { get; }
     public CancellationToken Token => Stop.Token;
 
+    /// <summary>Low-disk threshold. Overridable by tests; production keeps the constant.</summary>
+    public double MinFreeGb { get; init; } = Constants.Limits.MinFreeGb;
+
     public bool MirrorsExhausted
     {
         get => _mirrorsExhausted;

@@ -20,6 +20,25 @@ public sealed class MirrorClient
         RunContext ctx,
         CancellationToken ct)
     {
+        try
+        {
+            await FetchCoreAsync(http, url, partPath, taskId, ctx, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Python's fetch() surfaces the stop flag as Stopped, never as a failure.
+            throw new StoppedException();
+        }
+    }
+
+    private async Task FetchCoreAsync(
+        HttpClient http,
+        string url,
+        string partPath,
+        int taskId,
+        RunContext ctx,
+        CancellationToken ct)
+    {
         var existing = 0L;
         try
         {
