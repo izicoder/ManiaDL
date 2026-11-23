@@ -16,6 +16,7 @@ ui/e2e/artifacts/
 
 # Local state and secrets
 mania_dl_config.json
+report.md
 key.txt
 status.json
 downloaded_ids.txt
